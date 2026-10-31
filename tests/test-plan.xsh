@@ -54,7 +54,7 @@ proc digest(text: Str) -> Str {
 }
 
 proc content_source(text: Str) -> validate.PreparedSource {
-  validate.Content(text, digest(text))
+  validate.Content(validate.ContentSource(text: text, digest: digest(text)))
 }
 
 proc plan_one(

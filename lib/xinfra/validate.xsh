@@ -6,11 +6,20 @@ use xinfra.order
 
 const MAX_TEMPLATE_BYTES = 16 * 1024 * 1024
 
+## A prepared local artifact and its digest.
+export type LocalSource = {path: Path, digest: Str}
+
+## Prepared inline content and its digest.
+export type ContentSource = {text: Str, digest: Str}
+
+## A rendered template and its digest.
+export type TemplateSource = {text: Str, digest: Str}
+
 ## Exactly one content variant prepared for a local file resource.
 export enum PreparedSource {
-  Local(Path, Str),
-  Content(Str, Str),
-  Templated(Str, Str),
+  Local(LocalSource),
+  Content(ContentSource),
+  Templated(TemplateSource),
   Secret(model.SecretRef),
 }
 
@@ -46,9 +55,9 @@ pure utf8_path(target: Path) -> Bool {
 ## Returns the digest a prepared source declares, or null for a secret.
 export pure digest(source: PreparedSource) -> Str? {
   match source {
-    Local(_, digest_value) => digest_value,
-    Content(_, digest_value) => digest_value,
-    Templated(_, digest_value) => digest_value,
+    Local(value) => value.digest,
+    Content(value) => value.digest,
+    Templated(value) => value.digest,
     Secret(_) => null,
   }
 }
@@ -56,8 +65,8 @@ export pure digest(source: PreparedSource) -> Str? {
 ## Returns rendered text for a content or template source.
 export pure text(source: PreparedSource) -> Str? {
   match source {
-    Content(value, _) => value,
-    Templated(value, _) => value,
+    Content(value) => value.text,
+    Templated(value) => value.text,
     _ => null,
   }
 }
@@ -65,7 +74,7 @@ export pure text(source: PreparedSource) -> Str? {
 ## Returns the local artifact path for a file source, if it has one.
 export pure local_path(source: PreparedSource) -> Path? {
   match source {
-    Local(target, _) => target,
+    Local(value) => value.path,
     _ => null,
   }
 }
@@ -180,7 +189,7 @@ proc prepare_template(
   }
 
   let digest_value = hash.sha256(bytes.from_text(rendered)).hex()
-  Ok(Templated(rendered, digest_value))
+  Ok(Templated(TemplateSource(text: rendered, digest: digest_value)))
 }
 
 proc prepare_source(
@@ -193,11 +202,11 @@ proc prepare_source(
     model.Source(relative) => {
       let target = resolve_artifact(id, "source", base, root, relative)?
       let digest_value = digest_file(id, "source", target)?
-      Ok(Local(target, digest_value))
+      Ok(Local(LocalSource(path: target, digest: digest_value)))
     }
     model.Content(value) => {
       let digest_value = hash.sha256(bytes.from_text(value)).hex()
-      Ok(Content(value, digest_value))
+      Ok(Content(ContentSource(text: value, digest: digest_value)))
     }
     model.Secret(reference) => Ok(Secret(reference)),
     model.Templated(render_spec) => {
