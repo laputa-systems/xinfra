@@ -84,7 +84,11 @@ export proc apply_remote(
     return Ok(result(host_name, spec.id, host.Failed, false, text(changed.stderr).trim()))
   }
 
-  if spec.enabled != null {
+  let currently_enabled = match before {
+    plan.Running(facts) => facts.enabled,
+    _ => null,
+  }
+  if spec.enabled != null and currently_enabled != spec.enabled {
     let enable = if spec.enabled ?? false { "add" } else { "del" }
     let updated = execute(session, [@elevate, "rc-update", enable, spec.name, "default"])?
     if updated.exit_code != 0 {
