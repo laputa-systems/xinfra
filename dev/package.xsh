@@ -35,7 +35,7 @@ proc build() [fs, process, error, io] -> Result[Path, Error] {
   for directory in ["bin", "lib", "docs", "examples"] {
     let _ = fs.copy_tree(fp"{root}/{directory}", fp"{stage}/{directory}", true, true)?
   }
-  for file in ["xsht-config.ini", "README.md", "NOTICE", "install.sh"] {
+  for file in ["xsht-config.ini", "README.md", "NOTICE", "LICENSE", "install.sh"] {
     fp"{root}/{file}".copy(to: fp"{stage}/{file}", overwrite: true)?
   }
 

@@ -18,6 +18,7 @@ cp -R "$script_dir/examples" "$libexec/"
 cp "$script_dir/xsht-config.ini" "$libexec/"
 cp "$script_dir/README.md" "$libexec/"
 cp "$script_dir/NOTICE" "$libexec/"
+cp "$script_dir/LICENSE" "$libexec/"
 
 cat > "$prefix/bin/xinfra" <<WRAPPER
 #!/bin/sh

@@ -1,5 +1,7 @@
 xinfra
 
+xinfra is released under the MIT License. See LICENSE.
+
 This distribution contains no adapted pyinfra code. pyinfra 3.10.0 (MIT) is
 used only as a test oracle in a disposable virtual environment under .work and
 is not part of the package.

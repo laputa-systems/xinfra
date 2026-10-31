@@ -117,5 +117,5 @@ Report problems at <https://github.com/laputa-systems/xinfra/issues>.
 
 ## License
 
-xinfra has no declared license yet; redistribution terms are undefined.
-Third-party notices are in [NOTICE](NOTICE).
+xinfra is released under the [MIT License](LICENSE). Third-party notices are
+in [NOTICE](NOTICE).
