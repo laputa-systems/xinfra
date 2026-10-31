@@ -245,6 +245,33 @@ test test_rejects_template_syntax_render_encoding_and_size { |ctx|
   }
 }
 
+test test_rejects_a_rendered_template_over_the_bound { |ctx|
+  let root = test.temp_dir(ctx, "deploy-render-large")?
+  fp"{root}/templates".mkdir(parents: true)?
+  let filler = bytes.zero(16 * 1024 * 1024 - 6)?
+  let source = bytes.concat([filler, bytes.from_text("{{.v}}")])
+  fp"{root}/templates/render-large.tmpl".write(source)?
+  let file = write_deployment(
+    root,
+    "render-large",
+    module_source(
+      """[
+  model.File(
+    model.FileSpec(
+      id: "large-render",
+      path: p"/etc/large-render",
+      source: model.Templated(model.Template(
+        path: p"templates/render-large.tmpl",
+        vars: {"v": "xxxxxxx"},
+      )),
+    ),
+  ),
+]""",
+    ),
+  )?
+  expect_failure(validate.load(file, host_inventory(), root), "template-too-large", "template")
+}
+
 test test_rejects_unknown_host_selectors { |ctx|
   let root = test.temp_dir(ctx, "deploy-selector")?
   let file = write_deployment(

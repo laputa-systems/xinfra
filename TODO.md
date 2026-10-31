@@ -3,15 +3,6 @@
 Prefix: XIN
 Next: 8
 
-### XIN-3 · P3 · Rendered templates are not size-bounded
-
-- **Area:** Security
-- **Where:** `lib/xinfra/validate.xsh:159`, `lib/xinfra/validate.xsh:184`
-- **Problem:** `MAX_TEMPLATE_BYTES` checks the template source size, not the rendered output. A small template with a large variable or repeated expansion can render far beyond 16 MiB, then be hashed and streamed.
-- **Recommendation:** Reject a rendered string over `MAX_TEMPLATE_BYTES` before hashing or preparing it.
-- **Fix with:** `none`
-- **Effort:** S
-
 ### XIN-4 · P3 · Package and symlink name validation reject or defer supported inputs
 
 - **Area:** Types

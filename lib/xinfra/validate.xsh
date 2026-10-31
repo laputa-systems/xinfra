@@ -188,6 +188,17 @@ proc prepare_template(
     },
   }
 
+  if rendered.byte_len() > MAX_TEMPLATE_BYTES {
+    return Err(
+      problem(
+        "template-too-large",
+        f"rendered template is {rendered.byte_len()} bytes, over the {MAX_TEMPLATE_BYTES} byte bound",
+        id: id,
+        field: "template",
+      ),
+    )
+  }
+
   let digest_value = hash.sha256(bytes.from_text(rendered)).hex()
   Ok(Templated(TemplateSource(text: rendered, digest: digest_value)))
 }
