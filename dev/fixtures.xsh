@@ -402,6 +402,7 @@ cli main exec(cwd: Path = p".", ...command: List[Str]) [fs, process, env, error,
 
   let root = repo_root()?
   let home = lima_home(root)?
+  let pyinfra = env.get("XINFRA_PYINFRA") ?? f"{root}/.work/oracle/venv/bin/pyinfra"
   env LIMA_HOME=$home {
     for name in FIXTURES {
       ensure_running(root, name)?
@@ -430,6 +431,7 @@ cli main exec(cwd: Path = p".", ...command: List[Str]) [fs, process, env, error,
           XINFRA_FIXTURE_B_SSH_CONFIG: b.config.display(),
           XINFRA_FIXTURE_USER: FIXTURE_USER,
           XINFRA_FIXTURE_KEY: a.key.display(),
+          XINFRA_PYINFRA: pyinfra,
         },
       ),
     )?

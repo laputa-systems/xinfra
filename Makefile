@@ -15,10 +15,12 @@ endif
 XSH ?= $(XSH_ROOT)/target/$(TRIPLE)/release/xsh
 XSHT ?= $(XSH_ROOT)/target/$(TRIPLE)/release/xsht
 LIMA_HOME ?= $(CURDIR)/.work/fixtures/lima
+PYINFRA_VENV ?= $(CURDIR)/.work/oracle/venv
+PYINFRA ?= $(PYINFRA_VENV)/bin/pyinfra
 
 export LIMA_HOME
 
-.PHONY: check test fixtures verify down
+.PHONY: check test fixtures verify down oracle differential
 
 check:
 	$(XSHT) check
@@ -34,3 +36,9 @@ verify:
 
 down:
 	$(XSH) dev/fixtures.xsh down
+
+oracle:
+	@test -x $(PYINFRA) || { uv venv --python 3.13 $(PYINFRA_VENV) && uv pip install --python $(PYINFRA_VENV)/bin/python -r dev/oracle/requirements.txt; }
+
+differential: oracle
+	XINFRA_PYINFRA=$(PYINFRA) $(XSH) dev/fixtures.xsh exec --cwd $(CURDIR) -- $(XSH) dev/differential.xsh
