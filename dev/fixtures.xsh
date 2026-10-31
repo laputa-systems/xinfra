@@ -128,6 +128,10 @@ if [ -d /etc/doas.d ]; then
   echo 'permit nopass xinfra as root' > /etc/doas.d/xinfra.conf
   chmod 600 /etc/doas.d/xinfra.conf
 fi
+if ! grep -q '^RekeyLimit ' /etc/ssh/sshd_config; then
+  echo 'RekeyLimit 1M' >> /etc/ssh/sshd_config
+fi
+rc-service sshd reload >/dev/null 2>&1 || true
 """
 }
 
