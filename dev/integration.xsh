@@ -4,12 +4,14 @@ use integration.commands as commands_case
 use integration.dirs as dirs_case
 use integration.facts as facts_case
 use integration.files as files_case
+use integration.lock as lock_case
+use integration.multi_host as multi_host_case
 use integration.packages as packages_case
 use integration.services as services_case
 use integration.transport as transport_case
 use integration.users as users_case
 
-cli main(case: Str = "all") [fs, process, env, error, io] {
+cli main(case: Str = "all") [fs, process, env, time, error, io] {
   if case == "transport" or case == "all" {
     match transport_case.execute() {
       Ok(_) => {}
@@ -66,7 +68,22 @@ cli main(case: Str = "all") [fs, process, env, error, io] {
     }
   }
 
-  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "files" and case != "packages" and case != "users" and case != "commands" and case != "services" and case != "commands,services" and case != "all" {
+  let multi_cases = case == "multi-host,ordering,lock,cancel" or case == "multi-host,ordering,cancel,lock"
+  if case == "multi-host" or case == "ordering" or case == "cancel" or multi_cases or case == "all" {
+    match multi_host_case.check_multi_host() {
+      Ok(_) => {}
+      Err(message) => fail message
+    }
+  }
+
+  if case == "lock" or multi_cases or case == "all" {
+    match lock_case.check_lock() {
+      Ok(_) => {}
+      Err(message) => fail message
+    }
+  }
+
+  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "files" and case != "packages" and case != "users" and case != "commands" and case != "services" and case != "commands,services" and case != "multi-host" and case != "ordering" and case != "cancel" and case != "lock" and case != "multi-host,ordering,lock,cancel" and case != "multi-host,ordering,cancel,lock" and case != "all" {
     fail f"unknown integration case {case}"
   }
 }
