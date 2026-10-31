@@ -3,15 +3,6 @@
 Prefix: XIN
 Next: 8
 
-### XIN-5 · P3 · A service notification adds a second row with the service resource ID
-
-- **Area:** Data
-- **Where:** `lib/xinfra/cli.xsh:1130`
-- **Problem:** A notification restart appends an `Applied` row with the same `resource` ID as the service action. JSON and JSONL consumers see two rows with the same `(run_id, host, resource)` key, and the summary counts both changes.
-- **Recommendation:** Fold the notification result into the service row, or give it a distinct phase and identifier.
-- **Fix with:** `none`
-- **Effort:** S
-
 ### XIN-6 · P3 · Saved plans pin the xinfra version but not the XSH build
 
 - **Area:** Data

@@ -85,7 +85,6 @@ and streams channel data with bounded windows.
 ## Known gaps
 
 - Saved plans record the xinfra version, not the XSH build commit.
-- A service notification adds a second result row with the service resource ID.
 
 The backlog is in [TODO](../TODO.md).
 

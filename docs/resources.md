@@ -84,7 +84,8 @@ requested state is unchanged.
 
 Several changed resources that notify the same service cause one restart or
 reload per host. A notification runs after the resource changes; the service
-must be declared as a `ServiceResource` with that ID.
+must be declared as a `ServiceResource` with that ID. The restart is folded
+into that service's result row.
 
 ## Privilege
 

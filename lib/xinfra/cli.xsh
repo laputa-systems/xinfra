@@ -1196,6 +1196,26 @@ proc run_notification(
   Applied(result: identified, duration_ms: elapsed)
 }
 
+pure merge_notification(base: Applied, notified: Applied) -> Applied {
+  let status = match notified.result.status {
+    host.Changed => if base.result.status == host.Unchanged { host.Changed } else { base.result.status },
+    host.Unchanged => base.result.status,
+    other => other,
+  }
+  let notified_cause = notified.result.cause ?? ""
+  let cause = if notified_cause.is_empty() { base.result.cause } else { notified.result.cause }
+  Applied(
+    result: host.ApplyResult(
+      id: base.result.id,
+      host: base.result.host,
+      status: status,
+      verified: status == host.Changed or status == host.Unchanged,
+      cause: cause,
+    ),
+    duration_ms: base.duration_ms + notified.duration_ms,
+  )
+}
+
 proc apply_actions_remote(
   computed: Computed,
   actions: List[plan.Action],
@@ -1331,7 +1351,9 @@ proc apply_actions_remote(
   }
 
   let resources = actions |> map .resource
-  for action in actions {
+  var notifications: Map[Str, Applied] = map.empty()
+  for index in range(actions.len()) {
+    let action = actions[index]
     match action.resource {
       model.ServiceResource(spec) => {
         if aborted or action.host in stopped or spec.state != model.Started {
@@ -1343,14 +1365,22 @@ proc apply_actions_remote(
         }
         let changed_ids = changed_by_host.get(action.host) ?? []
         if spec.id in notify.coalesce(changed_ids, resources) {
-          applied += [run_notification(action, spec, hosts, sessions)]
+          notifications = notifications.set(action_key(action), run_notification(action, spec, hosts, sessions))
         }
       }
       _ => {}
     }
   }
 
-  applied
+  var merged: List[Applied] = []
+  for index in range(actions.len()) {
+    let action = actions[index]
+    match notifications.get(action_key(action)) {
+      Ok(value) => { merged += [merge_notification(applied[index], value)] },
+      Err(_) => { merged += [applied[index]] },
+    }
+  }
+  merged
 }
 
 proc release_locks(
