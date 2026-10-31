@@ -5,6 +5,7 @@ use integration.facts as facts_case
 use integration.files as files_case
 use integration.packages as packages_case
 use integration.transport as transport_case
+use integration.users as users_case
 
 cli main(case: Str = "all") [fs, process, env, error, io] {
   if case == "transport" or case == "all" {
@@ -42,7 +43,14 @@ cli main(case: Str = "all") [fs, process, env, error, io] {
     }
   }
 
-  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "files" and case != "packages" and case != "all" {
+  if case == "users" or case == "all" {
+    match users_case.check_users() {
+      Ok(_) => {}
+      Err(message) => fail message
+    }
+  }
+
+  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "files" and case != "packages" and case != "users" and case != "all" {
     fail f"unknown integration case {case}"
   }
 }
