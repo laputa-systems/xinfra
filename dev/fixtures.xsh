@@ -409,7 +409,11 @@ cli main exec(cwd: Path = p".", ...command: List[Str]) [fs, process, env, error,
 
     let a = guest_ssh(root, "xinfra-a")?
     let b = guest_ssh(root, "xinfra-b")?
-    let executable = process.which(command[0])?
+    let executable = if "/" in command[0] {
+      if command[0].starts_with("/") { fp"{command[0]}" } else { fp"{cwd}/{command[0]}" }
+    } else {
+      process.which(command[0])?
+    }
     let status = process.run(
       process.command_argv(
         executable,
