@@ -65,16 +65,16 @@ export proc apply_remote(
   }
 
   if spec.state == model.Absent {
-    let removed = execute(session, [@elevate, "delgroup", spec.name])?
+    let removed = execute(session, [@elevate, "groupdel", spec.name])?
     if removed.exit_code != 0 {
       return Ok(result(host_name, spec.id, host.Failed, false, text(removed.stderr).trim()))
     }
     return verify(session, host_name, spec)
   }
 
-  var argv = [@elevate, "addgroup"]
+  var argv = [@elevate, "groupadd"]
   if spec.system {
-    argv += ["-S"]
+    argv += ["-r"]
   }
   if spec.gid != null {
     argv += ["-g", f"{spec.gid ?? 0}"]

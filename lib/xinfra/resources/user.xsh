@@ -119,7 +119,7 @@ export proc apply_remote(
       }
       _ => {}
     }
-    let removed = execute(session, [@elevate, "deluser", spec.name])?
+    let removed = execute(session, [@elevate, "userdel", spec.name])?
     if removed.exit_code != 0 {
       return Ok(result(host_name, spec.id, host.Failed, false, text(removed.stderr).trim()))
     }
@@ -128,9 +128,9 @@ export proc apply_remote(
 
   match before {
     plan.Absent => {
-      var argv = [@elevate, "adduser", "-D"]
+      var argv = [@elevate, "useradd"]
       if spec.system {
-        argv += ["-S"]
+        argv += ["-r"]
       }
       if spec.uid != null {
         argv += ["-u", f"{spec.uid ?? 0}"]
@@ -140,10 +140,10 @@ export proc apply_remote(
         if primary_group == null {
           return Ok(result(host_name, spec.id, host.Failed, false, f"gid {spec.gid} has no group name"))
         }
-        argv += ["-G", primary_group ?? ""]
+        argv += ["-g", primary_group ?? ""]
       }
       if spec.home != null {
-        argv += ["-h", (spec.home ?? p"/").display()]
+        argv += ["-d", (spec.home ?? p"/").display()]
       }
       if spec.shell != null {
         argv += ["-s", (spec.shell ?? p"/bin/sh").display()]
@@ -151,8 +151,10 @@ export proc apply_remote(
       if ! spec.groups.is_empty() {
         argv += ["-G", spec.groups.join(",")]
       }
-      if ! spec.create_home {
-        argv += ["-H"]
+      if spec.create_home {
+        argv += ["-m"]
+      } else {
+        argv += ["-M"]
       }
       argv += [spec.name]
       let created = execute(session, argv)?
@@ -163,7 +165,7 @@ export proc apply_remote(
     plan.Account(facts) => {
       for member in spec.groups {
         if member not in facts.groups {
-          let added = execute(session, [@elevate, "addgroup", spec.name, member])?
+          let added = execute(session, [@elevate, "usermod", "-a", "-G", member, spec.name])?
           if added.exit_code != 0 {
             return Ok(result(host_name, spec.id, host.Partial, false, text(added.stderr).trim()))
           }
