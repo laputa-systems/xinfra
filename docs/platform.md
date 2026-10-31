@@ -84,7 +84,6 @@ and streams channel data with bounded windows.
 
 ## Known gaps
 
-- `--jobs` is validated, but apply runs sequentially.
 - Saved plans record the xinfra version, not the XSH build commit.
 - A service notification adds a second result row with the service resource ID.
 

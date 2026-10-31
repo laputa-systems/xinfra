@@ -98,8 +98,9 @@ SSH reverse tunnel from the controller.
 ## Measured costs
 
 Measured at the O1 tree on a constrained host. Values are indicative and the
-time gate was deferred, not passed. Full method is in
-[performance](performance.md).
+time gate was deferred, not passed. **Superseded:** the XIN-1 session-reuse
+change is measured in [performance](performance.md); the sequential-apply
+limit below no longer applies.
 
 | Metric | xinfra | pyinfra 3.10.0 |
 |---|---:|---:|
@@ -141,7 +142,8 @@ time gate was deferred, not passed. Full method is in
 - **Guest variants:** only Alpine 3.23/OpenSSH 10.x is qualified. Dropbear,
   BSD SSH, older OpenSSH, systemd, and non-Alpine package managers are
   deliberate omissions and fail rather than guessing.
-- **CLI concurrency:** apply is sequential; `--jobs` is validated but unused.
+- **CLI concurrency (O1):** apply was sequential; `--jobs` was validated but
+  unused.
 - **Saved-plan pin:** records the xinfra version, not the XSH commit.
 - **Notifications:** a restart/reload appends a second report row with the
   service resource ID.

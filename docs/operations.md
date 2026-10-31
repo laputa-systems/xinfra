@@ -140,7 +140,7 @@ control sequences, and redacts known secret values.
 
 ## Concurrency
 
-`--jobs` accepts `1` through `64` with a default of `8`. The multi-host
-scheduler in `lib/xinfra/scheduler.xsh` runs independent hosts concurrently and
-honours barriers between stages. The current CLI apply path is sequential; it
-validates `--jobs` but does not yet dispatch hosts in parallel.
+`--jobs` accepts `1` through `64` with a default of `8`. Apply runs each
+resource stage across independent hosts in parallel up to `--jobs`, then waits
+for the stage before starting resources that depend on it. Each host reuses one
+session for the locked phase.

@@ -139,7 +139,7 @@ Options:
   --deploy PATH      Deployment module.
   --limit LIST       Comma-separated host names or groups.
   --exclude LIST     Comma-separated host names or groups.
-  --jobs N           Apply job limit, default 8, maximum 64; apply is sequential.
+  --jobs N           Apply concurrency, default 8, maximum 64.
   --on-error POLICY  isolate, abort, or continue; default isolate.
   --format FORMAT    human, json, or jsonl; default human.
   --save-plan PATH   Write a versioned plan artifact.
@@ -543,6 +543,7 @@ proc gather_facts(
   allow_remote: Bool,
   deployment: validate.Deployment,
   selected: inventory.Inventory,
+  sessions: Map[Str, transport.Session]? = null,
 ) [fs, env, process, io, error] -> Result[plan.Facts, model.Problem] {
   if ops == null {
     if ! allow_remote {
@@ -556,20 +557,33 @@ proc gather_facts(
 
     var entries: List[plan.HostFacts] = []
     for entry in selected.hosts {
-      var observed: Map[Str, plan.Observed] = map.empty()
+      var resources: List[model.Resource] = []
       for resource in deployment.resources {
         if model.applies_to(resource, entry.name, entry.groups) {
-          let value = match driver.observe(entry, resource) {
-            Ok(value) => value,
-            Err(failure) => {
-              return Err(problem(
-                "transport",
-                f"cannot read {model.identity(resource)} on {entry.name}: {failure.message}",
-                field: "transport",
-              ))
-            },
-          }
-          observed = observed.set(model.identity(resource), value)
+          resources += [resource]
+        }
+      }
+      var observed: Map[Str, plan.Observed] = map.empty()
+      if sessions == null {
+        observed = match driver.observe_all(entry, resources) {
+          Ok(value) => value,
+          Err(failure) => {
+            return Err(problem("transport", f"cannot read facts on {entry.name}: {failure.message}", field: "transport"))
+          },
+        }
+      } else {
+        let session_map = sessions ?? map.empty()
+        let session = match session_map.get(entry.name) {
+          Ok(value) => value,
+          Err(_) => {
+            return Err(problem("transport", f"no session for {entry.name}", field: "transport"))
+          },
+        }
+        observed = match driver.observe_all_on(session, resources) {
+          Ok(value) => value,
+          Err(failure) => {
+            return Err(problem("transport", f"cannot read facts on {entry.name}: {failure.message}", field: "transport"))
+          },
         }
       }
       entries += [plan.HostFacts(name: entry.name, observed: observed)]
@@ -598,6 +612,7 @@ proc compute(
   ops: host.HostOps?,
   allow_remote: Bool,
   root: Path,
+  sessions: Map[Str, transport.Session]? = null,
 ) [fs, env, process, io, error] -> Result[Computed, model.Problem] {
   let inventory_file = options.inventory ?? p""
   var deploy_file = options.deploy ?? p""
@@ -613,7 +628,7 @@ proc compute(
   let loaded = load_inventory(inventory_file)?
   let selected = select_hosts(loaded, options.limit, options.exclude)?
   let deployment = validate.load(deploy_file, loaded, root)?
-  let facts = gather_facts(ops, allow_remote, deployment, selected)?
+  let facts = gather_facts(ops, allow_remote, deployment, selected, sessions)?
   let actions = plan.plan(deployment, selected, facts)
   Ok(
     Computed(
@@ -1063,10 +1078,130 @@ proc no_transport_rows(run_id: Str, actions: List[plan.Action]) -> List[report.R
   rows
 }
 
+pure action_key(action: plan.Action) -> Str {
+  f"{action.host}:{action.id}"
+}
+
+pure action_stages(actions: List[plan.Action]) -> List[List[plan.Action]] {
+  var stages: List[List[plan.Action]] = []
+  var stage: List[plan.Action] = []
+  var current = ""
+  for action in actions {
+    if stage.is_empty() {
+      stage = [action]
+      current = action.id
+    } else if action.id == current {
+      stage += [action]
+    } else {
+      stages += [stage]
+      stage = [action]
+      current = action.id
+    }
+  }
+  if ! stage.is_empty() {
+    stages += [stage]
+  }
+  stages
+}
+
+pure failure_result(id: Str, host_name: Str, message: Str) -> host.ApplyResult {
+  host.ApplyResult(
+    id: id,
+    host: host_name,
+    status: if transport.after_submission(message) { host.Unknown } else { host.Failed },
+    verified: false,
+    cause: message,
+  )
+}
+
+pure missing_host(id: Str, host_name: Str) -> host.ApplyResult {
+  host.ApplyResult(
+    id: id,
+    host: host_name,
+    status: host.Failed,
+    verified: false,
+    cause: "host is missing from the selected inventory",
+  )
+}
+
+proc run_action(
+  action: plan.Action,
+  hosts: Map[Str, inventory.Host],
+  sessions: Map[Str, transport.Session]?,
+) [fs, env, time, process, io, error] -> Applied {
+  let started = time.monotonic()?
+  let result = match hosts.get(action.host) {
+    Ok(entry) => match sessions {
+      null => match driver.apply(entry, action.resource, action.source) {
+        Ok(value) => value,
+        Err(failure) => failure_result(action.id, action.host, failure.message),
+      },
+      value => {
+        let session_map = value ?? map.empty()
+        match session_map.get(action.host) {
+          Ok(session) => match driver.apply_on(session, entry, action.resource, action.source) {
+            Ok(applied) => applied,
+            Err(failure) => failure_result(action.id, action.host, failure.message),
+          },
+          Err(_) => match driver.apply(entry, action.resource, action.source) {
+            Ok(applied) => applied,
+            Err(failure) => failure_result(action.id, action.host, failure.message),
+          },
+        }
+      },
+    },
+    Err(_) => missing_host(action.id, action.host),
+  }
+  let elapsed = (time.monotonic()? - started) / 1000000
+  Applied(result: with_host(result, action.host), duration_ms: elapsed)
+}
+
+proc run_notification(
+  action: plan.Action,
+  spec: model.ServiceSpec,
+  hosts: Map[Str, inventory.Host],
+  sessions: Map[Str, transport.Session]?,
+) [fs, env, time, process, io, error] -> Applied {
+  let started = time.monotonic()?
+  let result = match hosts.get(action.host) {
+    Ok(entry) => match sessions {
+      null => match driver.notify(entry, spec) {
+        Ok(value) => value,
+        Err(failure) => failure_result(spec.id, action.host, failure.message),
+      },
+      value => {
+        let session_map = value ?? map.empty()
+        match session_map.get(action.host) {
+          Ok(session) => match driver.notify_on(session, entry, spec) {
+            Ok(applied) => applied,
+            Err(failure) => failure_result(spec.id, action.host, failure.message),
+          },
+          Err(_) => match driver.notify(entry, spec) {
+            Ok(applied) => applied,
+            Err(failure) => failure_result(spec.id, action.host, failure.message),
+          },
+        }
+      },
+    },
+    Err(_) => missing_host(spec.id, action.host),
+  }
+  let elapsed = (time.monotonic()? - started) / 1000000
+  let identified = host.ApplyResult(
+    id: spec.id,
+    host: action.host,
+    status: result.status,
+    verified: result.verified,
+    cause: result.cause,
+  )
+  Applied(result: identified, duration_ms: elapsed)
+}
+
 proc apply_actions_remote(
   computed: Computed,
   actions: List[plan.Action],
   policy: OnError,
+  jobs: Int,
+  sessions: Map[Str, transport.Session]? = null,
 ) [fs, env, time, process, io, error] -> List[Applied] {
   var hosts: Map[Str, inventory.Host] = map.empty()
   for entry in computed.inventory.hosts {
@@ -1077,99 +1212,103 @@ proc apply_actions_remote(
   var stopped: Set[Str] = set.empty()
   var failed: Map[Str, Set[Str]] = map.empty()
   var aborted = false
-  for action in actions {
-    let host_failures: Set[Str] = failed.get(action.host) ?? set.empty()
-    var skip_cause: Str? = null
-    var skipped = false
-    if aborted {
-      skip_cause = "aborted after an earlier failure"
-      skipped = true
-    } else if action.host in stopped {
-      skip_cause = "host stopped after a failure"
-      skipped = true
-    } else {
-      for requirement in model.requirements(action.resource) {
-        if requirement in host_failures {
-          skip_cause = f"prerequisite {requirement} failed"
+  for stage in action_stages(actions) {
+    var stage_rows: Map[Str, Applied] = map.empty()
+    var runnable: List[plan.Action] = []
+    for action in stage {
+      let host_failures: Set[Str] = failed.get(action.host) ?? set.empty()
+      var skip_cause: Str? = null
+      var skipped = false
+      if aborted {
+        skip_cause = "aborted after an earlier failure"
+        skipped = true
+      } else if action.host in stopped {
+        skip_cause = "host stopped after a failure"
+        skipped = true
+      } else {
+        for requirement in model.requirements(action.resource) {
+          if requirement in host_failures {
+            skip_cause = f"prerequisite {requirement} failed"
+          }
         }
       }
-    }
 
-    if skip_cause != null {
-      let status = if skipped { host.Skipped } else { host.Blocked }
-      applied += [
-        Applied(
-          result: host.ApplyResult(
-            id: action.id,
-            host: action.host,
-            status: status,
-            verified: false,
-            cause: skip_cause,
+      if skip_cause != null {
+        let status = if skipped { host.Skipped } else { host.Blocked }
+        stage_rows = stage_rows.set(
+          action_key(action),
+          Applied(
+            result: host.ApplyResult(
+              id: action.id,
+              host: action.host,
+              status: status,
+              verified: false,
+              cause: skip_cause,
+            ),
+            duration_ms: 0,
           ),
-          duration_ms: 0,
-        ),
-      ]
-      if ! skipped {
+        )
+        if ! skipped {
+          failed = failed.set(action.host, host_failures.add(action.id))
+          if policy == Isolate {
+            stopped = stopped.add(action.host)
+          } else if policy == Abort {
+            aborted = true
+          }
+        }
+        continue
+      }
+
+      if action.prediction == plan.Blocked {
+        stage_rows = stage_rows.set(
+          action_key(action),
+          Applied(
+            result: host.ApplyResult(
+              id: action.id,
+              host: action.host,
+              status: host.Blocked,
+              verified: false,
+              cause: action.cause ?? "blocked by the current plan",
+            ),
+            duration_ms: 0,
+          ),
+        )
         failed = failed.set(action.host, host_failures.add(action.id))
         if policy == Isolate {
           stopped = stopped.add(action.host)
         } else if policy == Abort {
           aborted = true
         }
+        continue
       }
-      continue
+
+      runnable += [action]
     }
 
-    if action.prediction == plan.Blocked {
-      applied += [
-        Applied(
-          result: host.ApplyResult(
-            id: action.id,
-            host: action.host,
-            status: host.Blocked,
-            verified: false,
-            cause: action.cause ?? "blocked by the current plan",
-          ),
-          duration_ms: 0,
-        ),
-      ]
-      failed = failed.set(action.host, host_failures.add(action.id))
-      if policy == Isolate {
-        stopped = stopped.add(action.host)
-      } else if policy == Abort {
-        aborted = true
+    if ! runnable.is_empty() {
+      let batch = runnable |> par-map(jobs: jobs) { |action| run_action(action, hosts, sessions) }
+      for index in range(runnable.len()) {
+        let action = runnable[index]
+        let outcome_value = batch[index]
+        stage_rows = stage_rows.set(action_key(action), outcome_value)
+        if failure_status(outcome_value.result.status) {
+          let host_failures: Set[Str] = failed.get(action.host) ?? set.empty()
+          failed = failed.set(action.host, host_failures.add(action.id))
+          if policy == Isolate {
+            stopped = stopped.add(action.host)
+          } else if policy == Abort {
+            aborted = true
+          }
+        }
       }
-      continue
     }
 
-    let started = time.monotonic()?
-    let result = match hosts.get(action.host) {
-      Ok(entry) => match driver.apply(entry, action.resource, action.source) {
-        Ok(value) => value,
-        Err(failure) => host.ApplyResult(
-          id: action.id,
-          host: action.host,
-          status: if transport.after_submission(failure.message) { host.Unknown } else { host.Failed },
-          verified: false,
-          cause: failure.message,
-        ),
-      },
-      Err(_) => host.ApplyResult(
-        id: action.id,
-        host: action.host,
-        status: host.Failed,
-        verified: false,
-        cause: "host is missing from the selected inventory",
-      ),
-    }
-    let elapsed = (time.monotonic()? - started) / 1000000
-    applied += [Applied(result: with_host(result, action.host), duration_ms: elapsed)]
-    if failure_status(result.status) {
-      failed = failed.set(action.host, host_failures.add(action.id))
-      if policy == Isolate {
-        stopped = stopped.add(action.host)
-      } else if policy == Abort {
-        aborted = true
+    for action in stage {
+      match stage_rows.get(action_key(action)) {
+        Ok(value) => { applied += [value] },
+        Err(_) => {
+          applied += [Applied(result: missing_host(action.id, action.host), duration_ms: 0)]
+        },
       }
     }
   }
@@ -1204,35 +1343,7 @@ proc apply_actions_remote(
         }
         let changed_ids = changed_by_host.get(action.host) ?? []
         if spec.id in notify.coalesce(changed_ids, resources) {
-          let started = time.monotonic()?
-          let result = match hosts.get(action.host) {
-            Ok(entry) => match driver.notify(entry, spec) {
-              Ok(value) => value,
-              Err(failure) => host.ApplyResult(
-                id: spec.id,
-                host: action.host,
-                status: if transport.after_submission(failure.message) { host.Unknown } else { host.Failed },
-                verified: false,
-                cause: failure.message,
-              ),
-            },
-            Err(_) => host.ApplyResult(
-              id: spec.id,
-              host: action.host,
-              status: host.Failed,
-              verified: false,
-              cause: "host is missing from the selected inventory",
-            ),
-          }
-          let elapsed = (time.monotonic()? - started) / 1000000
-          let identified = host.ApplyResult(
-            id: spec.id,
-            host: action.host,
-            status: result.status,
-            verified: result.verified,
-            cause: result.cause,
-          )
-          applied += [Applied(result: identified, duration_ms: elapsed)]
+          applied += [run_notification(action, spec, hosts, sessions)]
         }
       }
       _ => {}
@@ -1242,10 +1353,17 @@ proc apply_actions_remote(
   applied
 }
 
-proc release_locks(hosts: List[inventory.Host], run_id: Str) [fs, process, io, error] {
+proc release_locks(
+  hosts: List[inventory.Host],
+  run_id: Str,
+  sessions: Map[Str, transport.Session],
+) [fs, process, io, error] {
   for entry in hosts {
     let token = f"{run_id}:{entry.name}"
-    let _ = driver.release_lock(entry, token)
+    match sessions.get(entry.name) {
+      Ok(session) => { let _ = driver.release_lock_on(session, entry, token) },
+      Err(_) => { let _ = driver.release_lock(entry, token) },
+    }
   }
 }
 
@@ -1257,6 +1375,7 @@ proc run_apply_locked(
   root: Path,
   run_id: Str,
   secured: redact.Redactor,
+  sessions: Map[Str, transport.Session]? = null,
 ) [fs, env, time, process, io, error] -> Execution {
   if options.plan != null {
     let plan_file = options.plan ?? p""
@@ -1276,7 +1395,7 @@ proc run_apply_locked(
 
   var rows: List[report.ResultRow] = []
   if ops == null and allow_remote {
-    let applied = apply_actions_remote(computed, computed.actions, options.on_error)
+    let applied = apply_actions_remote(computed, computed.actions, options.on_error, options.jobs, sessions)
     rows = applied_rows(run_id, applied, "apply")
   } else if ops == null {
     rows = no_transport_rows(run_id, computed.actions)
@@ -1296,6 +1415,22 @@ proc run_apply_locked(
   }
 }
 
+proc lock_failure(
+  options: Options,
+  run_id: Str,
+  host_name: Str,
+  message: Str,
+  secured: redact.Redactor,
+) -> Execution {
+  let rows = [
+    report.row(run_id, host_name, "lock", "apply", outcome.Failed, false, message, 0),
+  ]
+  match render_report(run_id, rows, 1, options.style, secured) {
+    Ok(value) => value,
+    Err(render_failure) => execution(2, "", render_failure.message + "\n"),
+  }
+}
+
 proc run_apply(
   options: Options,
   computed: Computed,
@@ -1310,33 +1445,50 @@ proc run_apply(
     return run_apply_locked(options, computed, ops, allow_remote, root, run_id, secured)
   }
 
+  var sessions: Map[Str, transport.Session] = map.empty()
+  for entry in computed.inventory.hosts {
+    match driver.connect(entry) {
+      Ok(session) => { sessions = sessions.set(entry.name, session) },
+      Err(failure) => {
+        for session in sessions.values() {
+          let _ = transport.close(session)
+        }
+        return lock_failure(options, run_id, entry.name, failure.message, secured)
+      },
+    }
+  }
+  defer {
+    for session in sessions.values() {
+      let _ = transport.close(session)
+    }
+  }
   var acquired: List[inventory.Host] = []
   defer {
-    release_locks(acquired, run_id)
+    release_locks(acquired, run_id, sessions)
   }
   for entry in computed.inventory.hosts {
     let token = f"{run_id}:{entry.name}"
-    match driver.lock(entry, token) {
+    let session = match sessions.get(entry.name) {
+      Ok(value) => value,
+      Err(_) => {
+        return lock_failure(options, run_id, entry.name, "session disappeared", secured)
+      },
+    }
+    match driver.lock_on(session, entry, token) {
       Ok(_) => { acquired += [entry] },
       Err(failure) => {
-        let rows = [
-          report.row(run_id, entry.name, "lock", "apply", outcome.Failed, false, failure.message, 0),
-        ]
-        return match render_report(run_id, rows, 1, options.style, secured) {
-          Ok(value) => value,
-          Err(render_failure) => execution(2, "", render_failure.message + "\n"),
-        }
+        return lock_failure(options, run_id, entry.name, failure.message, secured)
       },
     }
   }
 
-  let locked = match compute(options, ops, allow_remote, root) {
+  let locked = match compute(options, ops, allow_remote, root, sessions) {
     Ok(value) => value,
     Err(failure) => {
       return execution(2, "", report.clean(failure.message, secured) + "\n")
     },
   }
-  run_apply_locked(options, locked, ops, allow_remote, root, run_id, secured)
+  run_apply_locked(options, locked, ops, allow_remote, root, run_id, secured, sessions)
 }
 
 proc run_unlock(

@@ -1,16 +1,7 @@
 # TODO
 
 Prefix: XIN
-Next: 1
-
-### XIN-1 · P3 · Apply ignores `--jobs` and opens a session per observation and action
-
-- **Area:** Performance
-- **Where:** `lib/xinfra/cli.xsh:1106`, `lib/xinfra/cli.xsh:1196`, `lib/xinfra/driver.xsh:55`, `lib/xinfra/driver.xsh:110`
-- **Problem:** `apply --jobs 16` still applies sequentially because `run_apply_locked` never passes `options.jobs`. Every `driver.observe`, `driver.apply`, and `driver.notify` connects and closes a new SSH session. `docs/performance.md` measures 24 connections for a seven-resource deployment against pyinfra's two, and most of the wall-time gap is handshake cost.
-- **Recommendation:** Reuse one session per host for the observation and apply phase, and pass the validated job count to the multi-host scheduler. Re-run the deferred O1 measurement after the change.
-- **Fix with:** `make-it-fast`
-- **Effort:** M
+Next: 8
 
 ### XIN-2 · P3 · Package index refresh is not visible in reports
 

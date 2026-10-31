@@ -62,7 +62,7 @@ proc reset(session: transport.Session, elevate: List[Str]) -> Result[Unit, Error
 }
 
 proc accepted(session: transport.Session, elevate: List[Str]) -> Result[Int, Error] {
-  let result = execute(session, [@elevate, "sh", "-c", "grep -c 'Accepted publickey' /var/log/messages || true"])?
+  let result = execute(session, [@elevate, "sh", "-c", "grep -v -e 'ran command' -e 'COMMAND=' /var/log/messages | grep -c 'Accepted publickey' || true"])?
   let value = (result.stdout.utf8() ?? "0").trim().lines().get(0) ?? "0"
   Ok(value.parse_int() ?? 0)
 }
