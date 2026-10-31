@@ -141,6 +141,11 @@ export proc apply_remote(
           return Ok(result(host_name, spec.id, host.Failed, false, f"gid {spec.gid} has no group name"))
         }
         argv += ["-g", primary_group ?? ""]
+      } else {
+        let same_name = execute(session, ["getent", "group", spec.name])?
+        if same_name.exit_code == 0 {
+          argv += ["-g", spec.name]
+        }
       }
       if spec.home != null {
         argv += ["-d", (spec.home ?? p"/").display()]
