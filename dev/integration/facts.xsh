@@ -60,6 +60,9 @@ export proc execute() [fs, process, env, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
 
   with session = connect(a)? {
+    let _ = transport.exec(session, ["doas", "-n", "rc-service", "crond", "stop"])?
+    let _ = transport.exec(session, ["doas", "-n", "rc-update", "del", "crond", "default"])?
+
     let file = facts.file_fact(session, "/etc/alpine-release")?
     require(file.kind == "present", "present file was not present")?
     require(facts.field(file.fields, "size") != "0", "present file had no size")?

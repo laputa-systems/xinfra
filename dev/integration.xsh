@@ -2,18 +2,50 @@
 
 use integration.commands as commands_case
 use integration.dirs as dirs_case
+use integration.example as example_case
 use integration.facts as facts_case
 use integration.files as files_case
+use integration.hostile as hostile_case
+use integration.large_binary as large_binary_case
 use integration.lock as lock_case
 use integration.multi_host as multi_host_case
 use integration.packages as packages_case
 use integration.plans as plans_case
+use integration.privilege as privilege_case
 use integration.secrets as secrets_case
 use integration.services as services_case
 use integration.transport as transport_case
 use integration.users as users_case
 
 cli main(case: Str = "all") [fs, process, env, time, error, io] {
+  if case == "example" or case == "all" {
+    match example_case.check_example() {
+      Ok(_) => {}
+      Err(error) => fail error.message
+    }
+  }
+
+  if case == "hostile" or case == "all" {
+    match hostile_case.check_hostile() {
+      Ok(_) => {}
+      Err(error) => fail error.message
+    }
+  }
+
+  if case == "large-binary" or case == "all" {
+    match large_binary_case.check_large_binary() {
+      Ok(_) => {}
+      Err(error) => fail error.message
+    }
+  }
+
+  if case == "privilege" or case == "all" {
+    match privilege_case.check_privilege() {
+      Ok(_) => {}
+      Err(error) => fail error.message
+    }
+  }
+
   if case == "transport" or case == "all" {
     match transport_case.execute() {
       Ok(_) => {}
@@ -99,7 +131,36 @@ cli main(case: Str = "all") [fs, process, env, time, error, io] {
     }
   }
 
-  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "files" and case != "packages" and case != "users" and case != "commands" and case != "services" and case != "commands,services" and case != "multi-host" and case != "ordering" and case != "cancel" and case != "lock" and case != "multi-host,ordering,lock,cancel" and case != "multi-host,ordering,cancel,lock" and case != "secrets" and case != "reporting" and case != "secrets,reporting" and case != "stale-plan" and case != "plans" and case != "all" {
+  let known = [
+    "all",
+    "example",
+    "hostile",
+    "large-binary",
+    "privilege",
+    "transport",
+    "facts",
+    "dirs,symlinks",
+    "dirs",
+    "symlinks",
+    "files",
+    "packages",
+    "users",
+    "commands",
+    "services",
+    "commands,services",
+    "multi-host",
+    "ordering",
+    "cancel",
+    "lock",
+    "multi-host,ordering,lock,cancel",
+    "multi-host,ordering,cancel,lock",
+    "secrets",
+    "reporting",
+    "secrets,reporting",
+    "stale-plan",
+    "plans",
+  ]
+  if case not in known {
     fail f"unknown integration case {case}"
   }
 }

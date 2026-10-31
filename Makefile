@@ -20,7 +20,7 @@ PYINFRA ?= $(PYINFRA_VENV)/bin/pyinfra
 
 export LIMA_HOME
 
-.PHONY: check test fixtures verify down oracle differential
+.PHONY: check test fixtures verify down oracle differential integration
 
 check:
 	$(XSHT) check
@@ -42,3 +42,6 @@ oracle:
 
 differential: oracle
 	XINFRA_PYINFRA=$(PYINFRA) $(XSH) dev/fixtures.xsh exec --cwd $(CURDIR) -- $(XSH) dev/differential.xsh
+
+integration:
+	$(XSH) dev/fixtures.xsh exec --cwd $(CURDIR) -- $(XSH) dev/integration.xsh --case all
