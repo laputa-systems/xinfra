@@ -3,6 +3,8 @@
 use xinfra.host
 use xinfra.model
 use xinfra.plan
+use xinfra.remote as remote
+use xinfra.transport as transport
 
 proc verify_after(ops: host.HostOps, spec: model.SymlinkSpec) [fs, env, error] -> host.ApplyResult {
   match ops.inspect_path(spec.path) {
@@ -132,6 +134,137 @@ export proc apply(ops: host.HostOps, spec: model.SymlinkSpec) [fs, env, error] -
       }
 
       create_link(ops, spec, inspection)
+    },
+  }
+}
+
+pure remote_result(
+  host_name: Str,
+  id: Str,
+  status: host.ApplyStatus,
+  verified: Bool,
+  cause: Str? = null,
+) -> host.ApplyResult {
+  host.ApplyResult(id: id, host: host_name, status: status, verified: verified, cause: cause)
+}
+
+proc remote_verify_after(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.SymlinkSpec,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  match remote.inspect_path(session, spec.path) {
+    Err(failure) => remote_result(host_name, spec.id, host.Unknown, false, f"inspect after apply failed: {failure.message}"),
+    Ok(inspection) => {
+      let verification = plan.verify(model.Symlink(spec), null, host.observed(inspection))
+      if verification.ok {
+        remote_result(host_name, spec.id, host.Changed, true)
+      } else {
+        remote_result(host_name, spec.id, host.Partial, false, verification.cause)
+      }
+    },
+  }
+}
+
+proc remote_finish_failure(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.SymlinkSpec,
+  before: host.Inspection,
+  failure: Error,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  match remote.inspect_path(session, spec.path) {
+    Err(_) => remote_result(host_name, spec.id, host.Unknown, false, failure.message),
+    Ok(after) => {
+      if before == after {
+        remote_result(host_name, spec.id, host.Failed, false, failure.message)
+      } else {
+        remote_result(host_name, spec.id, host.Partial, false, failure.message)
+      }
+    },
+  }
+}
+
+proc remote_create_link(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.SymlinkSpec,
+  before: host.Inspection,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  let staged = match remote.reserve_staging(session, spec.path) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staging failed: {failure.message}") },
+  }
+  defer {
+    let _ = remote.remove_path(session, staged)
+  }
+
+  match remote.symlink(session, spec.target, staged) {
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"link creation failed: {failure.message}") },
+    Ok(_) => {}
+  }
+  match remote.promote(session, staged, spec.path) {
+    Err(failure) => { return remote_finish_failure(session, host_name, spec, before, failure) },
+    Ok(_) => {}
+  }
+  remote_verify_after(session, host_name, spec)
+}
+
+## Applies one symbolic-link resource over a remote session.
+export proc apply_remote(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.SymlinkSpec,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  let inspection = match remote.inspect_path(session, spec.path) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"inspect failed: {failure.message}") },
+  }
+  let assessment = plan.assess(model.Symlink(spec), null, host.observed(inspection))
+  match assessment.prediction {
+    plan.Unchanged => { return remote_result(host_name, spec.id, host.Unchanged, true) },
+    plan.Blocked => { return remote_result(host_name, spec.id, host.Blocked, false, assessment.cause) },
+    plan.Undetermined => { return remote_result(host_name, spec.id, host.Unknown, false, assessment.cause) },
+    plan.Changed => {}
+  }
+
+  let secure = match remote.parent_secure(session, spec.path.parent(), null) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"parent check failed: {failure.message}") },
+  }
+  if ! secure {
+    return remote_result(
+      host_name,
+      spec.id,
+      host.Blocked,
+      false,
+      f"parent of {spec.path.display()} is not a trusted directory",
+    )
+  }
+
+  match inspection {
+    host.Missing => remote_create_link(session, host_name, spec, inspection),
+    host.Found(stat) => {
+      if spec.state == model.Absent {
+        if stat.kind != "symlink" {
+          return remote_result(
+            host_name,
+            spec.id,
+            host.Blocked,
+            false,
+            f"{spec.path.display()} is a {stat.kind}, not a symbolic link",
+          )
+        }
+        let attempted = try {
+          remote.remove_path(session, spec.path)?
+        }
+        return match attempted {
+          Ok(_) => remote_verify_after(session, host_name, spec),
+          Err(failure) => remote_finish_failure(session, host_name, spec, inspection, failure),
+        }
+      }
+
+      remote_create_link(session, host_name, spec, inspection)
     },
   }
 }

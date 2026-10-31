@@ -3,6 +3,8 @@
 use xinfra.host
 use xinfra.model
 use xinfra.plan
+use xinfra.remote as remote
+use xinfra.transport as transport
 
 proc verify_after(ops: host.HostOps, spec: model.DirectorySpec) [fs, env, error] -> host.ApplyResult {
   match ops.inspect_path(spec.path) {
@@ -128,6 +130,125 @@ export proc apply(ops: host.HostOps, spec: model.DirectorySpec) [fs, env, error]
         }
       }
       finish(ops, spec, inspection, attempted)
+    }
+  }
+}
+
+pure remote_result(
+  host_name: Str,
+  id: Str,
+  status: host.ApplyStatus,
+  verified: Bool,
+  cause: Str? = null,
+) -> host.ApplyResult {
+  host.ApplyResult(id: id, host: host_name, status: status, verified: verified, cause: cause)
+}
+
+proc remote_verify_after(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.DirectorySpec,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  match remote.inspect_path(session, spec.path) {
+    Err(failure) => remote_result(
+      host_name,
+      spec.id,
+      host.Unknown,
+      false,
+      f"inspect after apply failed: {failure.message}",
+    ),
+    Ok(inspection) => {
+      let verification = plan.verify(model.Directory(spec), null, host.observed(inspection))
+      if verification.ok {
+        remote_result(host_name, spec.id, host.Changed, true)
+      } else {
+        remote_result(host_name, spec.id, host.Partial, false, verification.cause)
+      }
+    },
+  }
+}
+
+proc remote_finish(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.DirectorySpec,
+  before: host.Inspection,
+  attempted: Result[Unit, Error],
+) [fs, env, process, error, io] -> host.ApplyResult {
+  match attempted {
+    Ok(_) => remote_verify_after(session, host_name, spec),
+    Err(failure) => match remote.inspect_path(session, spec.path) {
+      Err(_) => remote_result(host_name, spec.id, host.Unknown, false, failure.message),
+      Ok(after) => {
+        if before == after {
+          remote_result(host_name, spec.id, host.Failed, false, failure.message)
+        } else {
+          remote_result(host_name, spec.id, host.Partial, false, failure.message)
+        }
+      },
+    },
+  }
+}
+
+## Applies one directory resource over a remote session.
+export proc apply_remote(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.DirectorySpec,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  let inspection = match remote.inspect_path(session, spec.path) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"inspect failed: {failure.message}") },
+  }
+  let assessment = plan.assess(model.Directory(spec), null, host.observed(inspection))
+  match assessment.prediction {
+    plan.Unchanged => return remote_result(host_name, spec.id, host.Unchanged, true),
+    plan.Blocked => return remote_result(host_name, spec.id, host.Blocked, false, assessment.cause),
+    plan.Undetermined => return remote_result(host_name, spec.id, host.Unknown, false, assessment.cause),
+    plan.Changed => {}
+  }
+
+  let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"parent check failed: {failure.message}") },
+  }
+  if ! secure {
+    return remote_result(
+      host_name,
+      spec.id,
+      host.Blocked,
+      false,
+      f"parent of {spec.path.display()} is not a trusted directory",
+    )
+  }
+
+  match inspection {
+    host.Missing => {
+      let attempted = try {
+        remote.mkdir_path(session, spec.path, spec.mode)?
+        remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group)?
+      }
+      remote_finish(session, host_name, spec, inspection, attempted)
+    }
+    host.Found(stat) => {
+      if stat.kind != "dir" {
+        return remote_result(
+          host_name,
+          spec.id,
+          host.Blocked,
+          false,
+          f"{spec.path.display()} is a {stat.kind}, not a directory",
+        )
+      }
+
+      let attempted = try {
+        if spec.state == model.Absent {
+          remote.remove_dir_path(session, spec.path)?
+        } else {
+          remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group)?
+        }
+      }
+      remote_finish(session, host_name, spec, inspection, attempted)
     }
   }
 }
