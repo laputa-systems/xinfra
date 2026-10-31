@@ -210,6 +210,26 @@ pure valid_account(text: Str) -> Bool {
   valid_identifier(text)
 }
 
+pure valid_package_name(text: Str) -> Bool {
+  if text.is_empty() {
+    return false
+  }
+
+  let first = text.byte_at(0) ?? 0
+  if ! (ascii_alnum(first) or first == 95) {
+    return false
+  }
+
+  for index in range(1, text.byte_len()) {
+    let byte = text.byte_at(index) ?? 0
+    if ! (ascii_alnum(byte) or byte == 43 or byte == 45 or byte == 46 or byte == 64 or byte == 95) {
+      return false
+    }
+  }
+
+  true
+}
+
 pure has_nul(text: Str) -> Bool {
   for index in range(text.byte_len()) {
     if text.byte_at(index) == 0 {
@@ -423,7 +443,7 @@ pure check_symlink(spec: SymlinkSpec) -> Result[Unit, Problem] {
 }
 
 pure check_package(spec: PackageSpec) -> Result[Unit, Problem] {
-  if ! valid_identifier(spec.name) {
+  if ! valid_package_name(spec.name) {
     return Err(problem("invalid-field", f"invalid package name {spec.name}", id: spec.id, field: "name"))
   }
 

@@ -3,15 +3,6 @@
 Prefix: XIN
 Next: 8
 
-### XIN-4 · P3 · Package and symlink name validation reject or defer supported inputs
-
-- **Area:** Types
-- **Where:** `lib/xinfra/model.xsh:425`, `lib/xinfra/model.xsh:413`, `lib/xinfra/remote.xsh:37`
-- **Problem:** Package names use `valid_identifier`, which rejects common Alpine names such as `libstdc++` and repository tags such as `foo@edge`. A symlink target such as `../current` validates but `remote_path` rejects any `..` component at apply, so the failure arrives after planning. `remote.symlink` also does not pass `--` before the target.
-- **Recommendation:** Add a package-name rule that permits Alpine syntax, add a symlink-target rule that permits relative parents, and pass `--` to `ln`.
-- **Fix with:** `make-invalid-states-unrepresentable`
-- **Effort:** S
-
 ### XIN-5 · P3 · A service notification adds a second row with the service resource ID
 
 - **Area:** Data

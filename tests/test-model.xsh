@@ -214,6 +214,21 @@ test test_rejects_invalid_symlinks { |ctx|
   expect_problem(model.validate(relative_path), "invalid-field", "path")
 }
 
+test test_accepts_alpine_package_names_and_relative_symlink_targets { |ctx|
+  expect_ok(model.validate(model.Package(model.PackageSpec(id: "stdcpp", name: "libstdc++"))))
+  expect_ok(model.validate(model.Package(model.PackageSpec(id: "edge", name: "nginx@edge"))))
+  expect_ok(
+    model.validate(
+      model.Symlink(model.SymlinkSpec(id: "current", path: p"/etc/current", target: p"../current")),
+    ),
+  )
+  expect_ok(
+    model.validate(
+      model.Symlink(model.SymlinkSpec(id: "dash", path: p"/etc/dash", target: p"-dash")),
+    ),
+  )
+}
+
 test test_rejects_invalid_package_specs { |ctx|
   let absent_constraint = model.Package(
     model.PackageSpec(id: "nginx", name: "nginx", state: model.Absent, constraint: ">=1.2"),

@@ -157,6 +157,26 @@ export proc check_dirs() [fs, process, env, error, io] -> Result[Unit, Str] {
     require(link_second.status == host.Unchanged, "second symlink apply was not unchanged")?
     print test_case("symlink first and second apply")
 
+    let nested = fp"{base}/nested"
+    let _ = run_command(session, ["mkdir", "-p", nested.display()])?
+    let relative_link = fp"{nested}/current"
+    let relative_spec = model.SymlinkSpec(id: "relative", path: relative_link, target: p"../target")
+    let relative = symlink.apply_remote(session, a.host, relative_spec)
+    require(relative.status == host.Changed and relative.verified, "relative symlink was not created")?
+    match inspect(session, relative_link)? {
+      host.Found(stat) => require((stat.target ?? p"") == p"../target", "relative target changed")?,
+      host.Missing => return Err("relative symlink disappeared"),
+    }
+    let dash_link = fp"{nested}/dash"
+    let dash_spec = model.SymlinkSpec(id: "dash", path: dash_link, target: p"-dash")
+    let dash = symlink.apply_remote(session, a.host, dash_spec)
+    require(dash.status == host.Changed and dash.verified, "dash symlink was not created")?
+    match inspect(session, dash_link)? {
+      host.Found(stat) => require((stat.target ?? p"") == p"-dash", "dash target changed")?,
+      host.Missing => return Err("dash symlink disappeared"),
+    }
+    print test_case("relative and dash symlink targets")
+
     let _ = run_command(session, ["rm", "-f", link.display()])?
     let _ = run_command(session, ["sh", "-c", f"printf x > {link.display()}"])?
     let no_replace = symlink.apply_remote(session, a.host, link_spec)

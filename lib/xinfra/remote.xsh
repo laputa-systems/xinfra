@@ -222,11 +222,22 @@ export proc remove_path(session: transport.Session, host_path: Path, elevate: Li
   Ok()
 }
 
+proc symlink_target(target: Path) -> Result[Str, Error] {
+  let text_value = match target.bytes().utf8() {
+    Ok(value) => value,
+    Err(_) => { return Err(error.failure("symlink target is not UTF-8")) },
+  }
+  if "\0" in text_value {
+    return Err(error.failure("symlink target contains NUL"))
+  }
+  Ok(text_value)
+}
+
 ## Create one remote symbolic link.
 export proc symlink(session: transport.Session, target: Path, link_path: Path, elevate: List[Str] = []) -> Result[Unit, Error] {
-  let link_target = remote_path(target)?
+  let link_target = symlink_target(target)?
   let link = remote_path(link_path)?
-  let result = execute(session, ["ln", "-s", link_target, link], elevate)?
+  let result = execute(session, ["ln", "-s", "--", link_target, link], elevate)?
   return Err(error.failure(text(result.stderr).trim())) when result.exit_code != 0
   Ok()
 }

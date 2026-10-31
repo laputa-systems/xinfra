@@ -20,6 +20,14 @@ pure result(host_name: Str, id: Str, status: host.ApplyStatus, verified: Bool, c
   host.ApplyResult(id: id, host: host_name, status: status, verified: verified, cause: cause)
 }
 
+pure base_name(name: Str) -> Str {
+  let at = name.find("@")
+  if at == null {
+    return name
+  }
+  name.byte_slice(0, at ?? 0)
+}
+
 pure package_version(line: Str, name: Str) -> Str? {
   let prefix = f"{name}-"
   let token = line.fields().get(0) ?? ""
@@ -44,12 +52,13 @@ pure constraint_target(constraint: Str) -> Str {
 }
 
 proc installed_version(session: transport.Session, name: Str) -> Result[Str?, Error] {
-  let result = execute(session, ["apk", "list", "-I", name])?
+  let base = base_name(name)
+  let result = execute(session, ["apk", "list", "-I", base])?
   if result.exit_code != 0 {
     return Err(error.failure(result.stderr.utf8() ?? ""))
   }
   let line = (result.stdout.utf8() ?? "").trim().lines().get(0) ?? ""
-  Ok(package_version(line, name))
+  Ok(package_version(line, base))
 }
 
 proc compare(session: transport.Session, installed: Str, wanted: Str) -> Result[Str, Error] {
@@ -138,7 +147,7 @@ export proc apply_remote(
 
   var refreshed = false
   if spec.state == model.Absent {
-    let removed = execute(session, [@elevate, "apk", "del", spec.name])?
+    let removed = execute(session, [@elevate, "apk", "del", base_name(spec.name)])?
     if removed.exit_code != 0 {
       return Ok(PackageApply(
         result: result(host_name, spec.id, host.Failed, false, (removed.stderr.utf8() ?? "").trim()),

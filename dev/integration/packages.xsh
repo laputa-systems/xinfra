@@ -121,6 +121,15 @@ export proc check_packages() [fs, process, env, error, io] -> Result[Unit, Str] 
     require(installed.refreshed, "install did not report its index refresh")?
     print test_case("install and refresh reporting")
 
+    let plus = model.PackageSpec(id: "stdcpp", name: "libstdc++")
+    match fact(session, plus)? {
+      plan.Installed(_) => {}
+      _ => { return Err("libstdc++ fact was not installed") },
+    }
+    let plus_result = apply(session, a.host, plus, elevate)?
+    require(plus_result.result.status == host.Unchanged, "libstdc++ was not unchanged")?
+    print test_case("package name with plus")
+
     let version = match fact(session, plan_spec)? {
       plan.Installed(facts) => facts.version ?? "",
       _ => { return Err("installed package is missing") },
