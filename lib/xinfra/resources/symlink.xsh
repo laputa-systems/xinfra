@@ -152,8 +152,9 @@ proc remote_verify_after(
   session: transport.Session,
   host_name: Str,
   spec: model.SymlinkSpec,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  match remote.inspect_path(session, spec.path) {
+  match remote.inspect_path(session, spec.path, elevate) {
     Err(failure) => remote_result(host_name, spec.id, host.Unknown, false, f"inspect after apply failed: {failure.message}"),
     Ok(inspection) => {
       let verification = plan.verify(model.Symlink(spec), null, host.observed(inspection))
@@ -172,8 +173,9 @@ proc remote_finish_failure(
   spec: model.SymlinkSpec,
   before: host.Inspection,
   failure: Error,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  match remote.inspect_path(session, spec.path) {
+  match remote.inspect_path(session, spec.path, elevate) {
     Err(_) => remote_result(host_name, spec.id, host.Unknown, false, failure.message),
     Ok(after) => {
       if before == after {
@@ -190,24 +192,25 @@ proc remote_create_link(
   host_name: Str,
   spec: model.SymlinkSpec,
   before: host.Inspection,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  let staged = match remote.reserve_staging(session, spec.path) {
+  let staged = match remote.reserve_staging(session, spec.path, elevate) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staging failed: {failure.message}") },
   }
   defer {
-    let _ = remote.remove_path(session, staged)
+    let _ = remote.remove_path(session, staged, elevate)
   }
 
-  match remote.symlink(session, spec.target, staged) {
+  match remote.symlink(session, spec.target, staged, elevate) {
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"link creation failed: {failure.message}") },
     Ok(_) => {}
   }
-  match remote.promote(session, staged, spec.path) {
-    Err(failure) => { return remote_finish_failure(session, host_name, spec, before, failure) },
+  match remote.promote(session, staged, spec.path, elevate) {
+    Err(failure) => { return remote_finish_failure(session, host_name, spec, before, failure, elevate) },
     Ok(_) => {}
   }
-  remote_verify_after(session, host_name, spec)
+  remote_verify_after(session, host_name, spec, elevate)
 }
 
 ## Applies one symbolic-link resource over a remote session.
@@ -215,8 +218,9 @@ export proc apply_remote(
   session: transport.Session,
   host_name: Str,
   spec: model.SymlinkSpec,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  let inspection = match remote.inspect_path(session, spec.path) {
+  let inspection = match remote.inspect_path(session, spec.path, elevate) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"inspect failed: {failure.message}") },
   }
@@ -228,7 +232,7 @@ export proc apply_remote(
     plan.Changed => {}
   }
 
-  let secure = match remote.parent_secure(session, spec.path.parent(), null) {
+  let secure = match remote.parent_secure(session, spec.path.parent(), null, elevate) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"parent check failed: {failure.message}") },
   }
@@ -243,7 +247,7 @@ export proc apply_remote(
   }
 
   match inspection {
-    host.Missing => remote_create_link(session, host_name, spec, inspection),
+    host.Missing => remote_create_link(session, host_name, spec, inspection, elevate),
     host.Found(stat) => {
       if spec.state == model.Absent {
         if stat.kind != "symlink" {
@@ -256,15 +260,15 @@ export proc apply_remote(
           )
         }
         let attempted = try {
-          remote.remove_path(session, spec.path)?
+          remote.remove_path(session, spec.path, elevate)?
         }
         return match attempted {
-          Ok(_) => remote_verify_after(session, host_name, spec),
-          Err(failure) => remote_finish_failure(session, host_name, spec, inspection, failure),
+          Ok(_) => remote_verify_after(session, host_name, spec, elevate),
+          Err(failure) => remote_finish_failure(session, host_name, spec, inspection, failure, elevate),
         }
       }
 
-      remote_create_link(session, host_name, spec, inspection)
+      remote_create_link(session, host_name, spec, inspection, elevate)
     },
   }
 }

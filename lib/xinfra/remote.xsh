@@ -50,17 +50,17 @@ proc remote_path(host_path: Path) -> Result[Str, Error] {
   Ok(text)
 }
 
-proc execute(session: transport.Session, argv: List[Str]) -> Result[transport.ExecResult, Error] {
-  match transport.exec(session, argv) {
+proc execute(session: transport.Session, argv: List[Str], elevate: List[Str] = []) -> Result[transport.ExecResult, Error] {
+  match transport.exec(session, elevate + argv) {
     Ok(value) => Ok(value),
     Err(message) => Err(error.failure(message)),
   }
 }
 
 ## Inspect one remote path.
-export proc inspect_path(session: transport.Session, host_path: Path) -> Result[host.Inspection, Error] {
+export proc inspect_path(session: transport.Session, host_path: Path, elevate: List[Str] = []) -> Result[host.Inspection, Error] {
   let location = remote_path(host_path)?
-  let result = execute(session, ["stat", "-c", "%F|%a|%u|%g|%s|%Y", location])?
+  let result = execute(session, ["stat", "-c", "%F|%a|%u|%g|%s|%Y", location], elevate)?
   if result.exit_code != 0 {
     let message = text(result.stderr)
     return Ok(host.Missing) when "No such file" in message
@@ -83,7 +83,7 @@ export proc inspect_path(session: transport.Session, host_path: Path) -> Result[
   let owner = name_for(session, "passwd", parts[2])?
   let group_name = name_for(session, "group", parts[3])?
   let digest = if kind == "file" {
-    let hashed = execute(session, ["sha256sum", location])?
+    let hashed = execute(session, ["sha256sum", location], elevate)?
     if hashed.exit_code == 0 {
       let first = match text(hashed.stdout).fields().get(0) {
         Ok(value) => value,
@@ -97,13 +97,13 @@ export proc inspect_path(session: transport.Session, host_path: Path) -> Result[
     null
   }
   let target = if kind == "symlink" {
-    let linked = execute(session, ["readlink", location])?
+    let linked = execute(session, ["readlink", location], elevate)?
     if linked.exit_code == 0 { fp"{text(linked.stdout).trim()}" } else { null }
   } else {
     null
   }
   let empty = if kind == "dir" {
-    let listed = execute(session, ["ls", "-A", location])?
+    let listed = execute(session, ["ls", "-A", location], elevate)?
     text(listed.stdout).is_empty()
   } else {
     true
@@ -134,8 +134,8 @@ proc name_for(session: transport.Session, database: Str, id: Str) -> Result[Str?
 }
 
 ## Check that a remote parent directory is trusted.
-export proc parent_secure(session: transport.Session, host_path: Path, expected_owner: Str?) -> Result[Bool, Error] {
-  let inspection = inspect_path(session, host_path)?
+export proc parent_secure(session: transport.Session, host_path: Path, expected_owner: Str?, elevate: List[Str] = []) -> Result[Bool, Error] {
+  let inspection = inspect_path(session, host_path, elevate)?
   match inspection {
     host.Missing => Ok(false),
     host.Found(stat) => {
@@ -150,7 +150,7 @@ export proc parent_secure(session: transport.Session, host_path: Path, expected_
         null => Ok(true),
         name => {
           let owner_name = name ?? ""
-          let result = execute(session, ["id", "-u", owner_name])?
+          let result = execute(session, ["id", "-u", owner_name], elevate)?
           if result.exit_code != 0 {
             return Ok(false)
           }
@@ -162,49 +162,49 @@ export proc parent_secure(session: transport.Session, host_path: Path, expected_
 }
 
 ## Create one remote directory and set its mode.
-export proc mkdir_path(session: transport.Session, host_path: Path, mode: Int) -> Result[Unit, Error] {
+export proc mkdir_path(session: transport.Session, host_path: Path, mode: Int, elevate: List[Str] = []) -> Result[Unit, Error] {
   let location = remote_path(host_path)?
-  let result = execute(session, ["mkdir", "-m", octal(mode), location])?
+  let result = execute(session, ["mkdir", "-m", octal(mode), location], elevate)?
   return Err(error.failure(text(result.stderr).trim())) when result.exit_code != 0
   Ok()
 }
 
 ## Remove one empty remote directory.
-export proc remove_dir_path(session: transport.Session, host_path: Path) -> Result[Unit, Error] {
+export proc remove_dir_path(session: transport.Session, host_path: Path, elevate: List[Str] = []) -> Result[Unit, Error] {
   let location = remote_path(host_path)?
-  let result = execute(session, ["rmdir", location])?
+  let result = execute(session, ["rmdir", location], elevate)?
   return Err(error.failure(text(result.stderr).trim())) when result.exit_code != 0
   Ok()
 }
 
 ## Reserve a private staging name in the destination parent.
-export proc reserve_staging(session: transport.Session, destination: Path) -> Result[Path, Error] {
+export proc reserve_staging(session: transport.Session, destination: Path, elevate: List[Str] = []) -> Result[Path, Error] {
   let parent = remote_path(destination.parent())?
-  let created = execute(session, ["mktemp", "-p", parent, ".xinfra.XXXXXX"])?
+  let created = execute(session, ["mktemp", "-p", parent, ".xinfra.XXXXXX"], elevate)?
   return Err(error.failure(text(created.stderr).trim())) when created.exit_code != 0
   let staging = text(created.stdout).trim()
-  let removed = execute(session, ["rm", "-f", staging])?
+  let removed = execute(session, ["rm", "-f", staging], elevate)?
   return Err(error.failure(text(removed.stderr).trim())) when removed.exit_code != 0
   Ok(fp"{staging}")
 }
 
 ## Set a remote path mode and optional ownership.
-export proc set_metadata(session: transport.Session, host_path: Path, mode: Int, owner: Str?, group_name: Str?) -> Result[Unit, Error] {
+export proc set_metadata(session: transport.Session, host_path: Path, mode: Int, owner: Str?, group_name: Str?, elevate: List[Str] = []) -> Result[Unit, Error] {
   let location = remote_path(host_path)?
-  let changed = execute(session, ["chmod", octal(mode), location])?
+  let changed = execute(session, ["chmod", octal(mode), location], elevate)?
   return Err(error.failure(text(changed.stderr).trim())) when changed.exit_code != 0
   if owner != null or group_name != null {
     let spec = f"{owner ?? ""}:{group_name ?? ""}"
-    let chowned = execute(session, ["chown", spec, location])?
+    let chowned = execute(session, ["chown", spec, location], elevate)?
     return Err(error.failure(text(chowned.stderr).trim())) when chowned.exit_code != 0
   }
   Ok()
 }
 
 ## Hash one remote file.
-export proc digest_path(session: transport.Session, host_path: Path) -> Result[Str, Error] {
+export proc digest_path(session: transport.Session, host_path: Path, elevate: List[Str] = []) -> Result[Str, Error] {
   let location = remote_path(host_path)?
-  let result = execute(session, ["sha256sum", location])?
+  let result = execute(session, ["sha256sum", location], elevate)?
   return Err(error.failure(text(result.stderr).trim())) when result.exit_code != 0
   let first = match text(result.stdout).fields().get(0) {
     Ok(value) => value,
@@ -214,35 +214,35 @@ export proc digest_path(session: transport.Session, host_path: Path) -> Result[S
 }
 
 ## Promote a staged remote object with mv -T.
-export proc promote(session: transport.Session, staged: Path, destination: Path) -> Result[Unit, Error] {
+export proc promote(session: transport.Session, staged: Path, destination: Path, elevate: List[Str] = []) -> Result[Unit, Error] {
   let source = remote_path(staged)?
   let target = remote_path(destination)?
-  let result = execute(session, ["mv", "-T", source, target])?
+  let result = execute(session, ["mv", "-T", source, target], elevate)?
   return Err(error.failure(text(result.stderr).trim())) when result.exit_code != 0
   Ok()
 }
 
 ## Remove one remote path.
-export proc remove_path(session: transport.Session, host_path: Path) -> Result[Unit, Error] {
+export proc remove_path(session: transport.Session, host_path: Path, elevate: List[Str] = []) -> Result[Unit, Error] {
   let location = remote_path(host_path)?
-  let result = execute(session, ["rm", "-f", location])?
+  let result = execute(session, ["rm", "-f", location], elevate)?
   return Err(error.failure(text(result.stderr).trim())) when result.exit_code != 0
   Ok()
 }
 
 ## Create one remote symbolic link.
-export proc symlink(session: transport.Session, target: Path, link_path: Path) -> Result[Unit, Error] {
+export proc symlink(session: transport.Session, target: Path, link_path: Path, elevate: List[Str] = []) -> Result[Unit, Error] {
   let link_target = remote_path(target)?
   let link = remote_path(link_path)?
-  let result = execute(session, ["ln", "-s", link_target, link])?
+  let result = execute(session, ["ln", "-s", link_target, link], elevate)?
   return Err(error.failure(text(result.stderr).trim())) when result.exit_code != 0
   Ok()
 }
 
 ## Read one remote file.
-export proc read_file_path(session: transport.Session, host_path: Path) -> Result[Bytes, Error] {
+export proc read_file_path(session: transport.Session, host_path: Path, elevate: List[Str] = []) -> Result[Bytes, Error] {
   let location = remote_path(host_path)?
-  let result = execute(session, ["cat", location])?
+  let result = execute(session, ["cat", location], elevate)?
   return Err(error.failure(text(result.stderr).trim())) when result.exit_code != 0
   Ok(result.stdout)
 }

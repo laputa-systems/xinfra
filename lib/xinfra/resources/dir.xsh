@@ -148,8 +148,9 @@ proc remote_verify_after(
   session: transport.Session,
   host_name: Str,
   spec: model.DirectorySpec,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  match remote.inspect_path(session, spec.path) {
+  match remote.inspect_path(session, spec.path, elevate) {
     Err(failure) => remote_result(
       host_name,
       spec.id,
@@ -174,10 +175,11 @@ proc remote_finish(
   spec: model.DirectorySpec,
   before: host.Inspection,
   attempted: Result[Unit, Error],
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
   match attempted {
-    Ok(_) => remote_verify_after(session, host_name, spec),
-    Err(failure) => match remote.inspect_path(session, spec.path) {
+    Ok(_) => remote_verify_after(session, host_name, spec, elevate),
+    Err(failure) => match remote.inspect_path(session, spec.path, elevate) {
       Err(_) => remote_result(host_name, spec.id, host.Unknown, false, failure.message),
       Ok(after) => {
         if before == after {
@@ -195,8 +197,9 @@ export proc apply_remote(
   session: transport.Session,
   host_name: Str,
   spec: model.DirectorySpec,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  let inspection = match remote.inspect_path(session, spec.path) {
+  let inspection = match remote.inspect_path(session, spec.path, elevate) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"inspect failed: {failure.message}") },
   }
@@ -208,7 +211,7 @@ export proc apply_remote(
     plan.Changed => {}
   }
 
-  let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner) {
+  let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner, elevate) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"parent check failed: {failure.message}") },
   }
@@ -225,10 +228,10 @@ export proc apply_remote(
   match inspection {
     host.Missing => {
       let attempted = try {
-        remote.mkdir_path(session, spec.path, spec.mode)?
-        remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group)?
+        remote.mkdir_path(session, spec.path, spec.mode, elevate)?
+        remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group, elevate)?
       }
-      remote_finish(session, host_name, spec, inspection, attempted)
+      remote_finish(session, host_name, spec, inspection, attempted, elevate)
     }
     host.Found(stat) => {
       if stat.kind != "dir" {
@@ -243,12 +246,12 @@ export proc apply_remote(
 
       let attempted = try {
         if spec.state == model.Absent {
-          remote.remove_dir_path(session, spec.path)?
+          remote.remove_dir_path(session, spec.path, elevate)?
         } else {
-          remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group)?
+          remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group, elevate)?
         }
       }
-      remote_finish(session, host_name, spec, inspection, attempted)
+      remote_finish(session, host_name, spec, inspection, attempted, elevate)
     }
   }
 }

@@ -288,9 +288,10 @@ proc remote_verify_after(
   spec: model.FileSpec,
   source: validate.PreparedSource,
   digest: Str,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
   let verification_source = validate.Local(validate.LocalSource(path: spec.path, digest: digest))
-  match remote.inspect_path(session, spec.path) {
+  match remote.inspect_path(session, spec.path, elevate) {
     Err(failure) => remote_result(host_name, spec.id, host.Unknown, false, f"inspect after apply failed: {failure.message}"),
     Ok(inspection) => {
       let verification = plan.verify(model.File(spec), verification_source, host.observed(inspection))
@@ -310,8 +311,9 @@ proc remote_finish_failure(
   before: host.Inspection,
   status: host.ApplyStatus,
   failure: Error,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  match remote.inspect_path(session, spec.path) {
+  match remote.inspect_path(session, spec.path, elevate) {
     Err(_) => remote_result(host_name, spec.id, host.Unknown, false, failure.message),
     Ok(after) => {
       if before == after {
@@ -327,8 +329,9 @@ proc remote_verify_removed(
   session: transport.Session,
   host_name: Str,
   spec: model.FileSpec,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  match remote.inspect_path(session, spec.path) {
+  match remote.inspect_path(session, spec.path, elevate) {
     Err(failure) => remote_result(host_name, spec.id, host.Unknown, false, f"inspect after apply failed: {failure.message}"),
     Ok(inspection) => {
       let verification = plan.verify(model.File(spec), null, host.observed(inspection))
@@ -347,26 +350,27 @@ proc remote_apply_content(
   spec: model.FileSpec,
   source: validate.PreparedSource,
   before: host.Inspection,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
   let expected = match secret.digest(source) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"secret failed: {failure.message}") },
   }
 
-  let staged = match remote.reserve_staging(session, spec.path) {
+  let staged = match remote.reserve_staging(session, spec.path, elevate) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staging failed: {failure.message}") },
   }
   defer {
-    let _ = remote.remove_path(session, staged)
+    let _ = remote.remove_path(session, staged, elevate)
   }
 
-  match staging.write(session, staged, source) {
+  match staging.write(session, staged, source, elevate) {
     Err(failure) => { return remote_result(host_name, spec.id, host.Partial, false, f"transfer failed: {failure.message}") },
     Ok(_) => {}
   }
 
-  match remote.digest_path(session, staged) {
+  match remote.digest_path(session, staged, elevate) {
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staged digest failed: {failure.message}") },
     Ok(actual) => {
       if actual != expected {
@@ -376,20 +380,20 @@ proc remote_apply_content(
   }
 
   let staged_mode = if secret.is_secret(source) { 0o600 } else { spec.mode }
-  match remote.set_metadata(session, staged, staged_mode, spec.owner, spec.group) {
+  match remote.set_metadata(session, staged, staged_mode, spec.owner, spec.group, elevate) {
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staged metadata failed: {failure.message}") },
     Ok(_) => {}
   }
 
   if spec.validate != null {
     let validation = spec.validate ?? model.Validation(argv: [])
-    match staging.validate(session, validation.argv, staged) {
+    match staging.validate(session, validation.argv, staged, elevate) {
       Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"validation failed: {failure.message}") },
       Ok(_) => {}
     }
   }
 
-  match remote.inspect_path(session, staged) {
+  match remote.inspect_path(session, staged, elevate) {
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staged inspect failed: {failure.message}") },
     Ok(host.Found(stat)) => {
       if stat.kind != "file" {
@@ -399,18 +403,18 @@ proc remote_apply_content(
     Ok(host.Missing) => { return remote_result(host_name, spec.id, host.Failed, false, "staged object disappeared") },
   }
 
-  match remote.promote(session, staged, spec.path) {
-    Err(failure) => { return remote_finish_failure(session, host_name, spec, before, host.Failed, failure) },
+  match remote.promote(session, staged, spec.path, elevate) {
+    Err(failure) => { return remote_finish_failure(session, host_name, spec, before, host.Failed, failure, elevate) },
     Ok(_) => {}
   }
   if secret.is_secret(source) and spec.mode != 0o600 {
-    match remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group) {
+    match remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group, elevate) {
       Err(failure) => { return remote_result(host_name, spec.id, host.Partial, false, f"final metadata failed: {failure.message}") },
       Ok(_) => {}
     }
   }
 
-  remote_verify_after(session, host_name, spec, source, expected)
+  remote_verify_after(session, host_name, spec, source, expected, elevate)
 }
 
 ## Applies one file resource over a remote session.
@@ -419,8 +423,9 @@ export proc apply_remote(
   host_name: Str,
   spec: model.FileSpec,
   source: validate.PreparedSource?,
+  elevate: List[Str] = [],
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  let inspection = match remote.inspect_path(session, spec.path) {
+  let inspection = match remote.inspect_path(session, spec.path, elevate) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"inspect failed: {failure.message}") },
   }
@@ -453,7 +458,7 @@ export proc apply_remote(
   }
 
   if spec.state == model.Absent {
-    let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner) {
+    let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner, elevate) {
       Ok(value) => value,
       Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"parent check failed: {failure.message}") },
     }
@@ -461,11 +466,11 @@ export proc apply_remote(
       return remote_result(host_name, spec.id, host.Blocked, false, f"parent of {spec.path.display()} is not a trusted directory")
     }
     let attempted = try {
-      remote.remove_path(session, spec.path)?
+      remote.remove_path(session, spec.path, elevate)?
     }
     return match attempted {
-      Ok(_) => remote_verify_removed(session, host_name, spec),
-      Err(failure) => remote_finish_failure(session, host_name, spec, inspection, host.Failed, failure),
+      Ok(_) => remote_verify_removed(session, host_name, spec, elevate),
+      Err(failure) => remote_finish_failure(session, host_name, spec, inspection, host.Failed, failure, elevate),
     }
   }
 
@@ -473,7 +478,7 @@ export proc apply_remote(
     return remote_result(host_name, spec.id, host.Failed, false, "a present file needs a prepared source")
   }
 
-  let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner) {
+  let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner, elevate) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"parent check failed: {failure.message}") },
   }
@@ -481,5 +486,5 @@ export proc apply_remote(
     return remote_result(host_name, spec.id, host.Blocked, false, f"parent of {spec.path.display()} is not a trusted directory")
   }
 
-  remote_apply_content(session, host_name, spec, source, inspection)
+  remote_apply_content(session, host_name, spec, source, inspection, elevate)
 }

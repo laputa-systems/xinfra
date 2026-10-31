@@ -112,14 +112,22 @@ export proc run_script(
   }
 }
 
+pure elevated_body(elevate: List[Str], body: Str) -> Str {
+  if elevate.is_empty() {
+    return body
+  }
+  f"{shlex.join(elevate)} sh -c {shlex.quote(body)}"
+}
+
 ## Stream a local file to one remote path.
 export proc upload_file(
   session: Session,
   destination: Path,
   source: Path,
   timeout_ms: Int? = null,
+  elevate: List[Str] = [],
 ) -> Result[ExecResult, Str] {
-  let command = shell_command(f"cat > {shlex.quote(destination.display())}")
+  let command = shell_command(elevated_body(elevate, f"cat > {shlex.quote(destination.display())}"))
   let result = if timeout_ms == null {
     ssh.exec(session, command, {stdin_path: source})
   } else {
@@ -137,8 +145,9 @@ export proc write_bytes(
   destination: Path,
   data: Bytes,
   timeout_ms: Int? = null,
+  elevate: List[Str] = [],
 ) -> Result[ExecResult, Str] {
-  let command = shell_command(f"cat > {shlex.quote(destination.display())}")
+  let command = shell_command(elevated_body(elevate, f"cat > {shlex.quote(destination.display())}"))
   let result = if timeout_ms == null {
     ssh.exec(session, command, {stdin: data})
   } else {
@@ -156,6 +165,7 @@ export proc exec_stdin(
   argv: List[Str],
   data: Bytes,
   timeout_ms: Int? = null,
+  elevate: List[Str] = [],
 ) -> Result[ExecResult, Str] {
   if argv.is_empty() {
     return Err("empty argv")
@@ -165,7 +175,7 @@ export proc exec_stdin(
       return Err("argument contains NUL")
     }
   }
-  let command = shell_command(shlex.join(argv))
+  let command = shell_command(shlex.join(elevate + argv))
   let result = if timeout_ms == null {
     ssh.exec(session, command, {stdin: data})
   } else {
