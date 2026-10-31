@@ -1,6 +1,7 @@
 ##! Remote file staging and validation.
 
 use xinfra.remote as remote
+use xinfra.secret as secret
 use xinfra.transport as transport
 use xinfra.validate
 
@@ -35,7 +36,20 @@ export proc write(
       return Err(error.failure(result.stderr.utf8() ?? "")) when result.exit_code != 0
       Ok()
     }
-    validate.Secret(_) => Err(error.failure("secret file sources are R7")),
+    validate.Secret(reference) => {
+      let data = secret.resolve(reference)?
+      let result = match transport.write_bytes(session, destination, data, 60000) {
+        Ok(value) => value,
+        Err(message) => { return Err(error.failure(message)) },
+      }
+      if result.exit_code != 0 {
+        return Err(error.failure(result.stderr.utf8() ?? ""))
+      }
+      match remote.set_metadata(session, destination, 0o600, null, null) {
+        Ok(_) => Ok(),
+        Err(failure) => Err(failure),
+      }
+    }
   }
 }
 

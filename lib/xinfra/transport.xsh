@@ -150,6 +150,33 @@ export proc write_bytes(
   }
 }
 
+## Run one argv command with secret bytes on stdin.
+export proc exec_stdin(
+  session: Session,
+  argv: List[Str],
+  data: Bytes,
+  timeout_ms: Int? = null,
+) -> Result[ExecResult, Str] {
+  if argv.is_empty() {
+    return Err("empty argv")
+  }
+  for argument in argv {
+    if "\0" in argument {
+      return Err("argument contains NUL")
+    }
+  }
+  let command = shell_command(shlex.join(argv))
+  let result = if timeout_ms == null {
+    ssh.exec(session, command, {stdin: data})
+  } else {
+    ssh.exec(session, command, {stdin: data, timeout_ms: timeout_ms ?? 0})
+  }
+  match result {
+    Ok(value) => Ok(value),
+    Err(error) => Err(error.message),
+  }
+}
+
 ## Close a transport session.
 export proc close(session: Session) -> Result[Unit, Str] {
   match ssh.close(session) {

@@ -4,6 +4,7 @@ use xinfra.host as host
 use xinfra.model as model
 use xinfra.plan as plan
 use xinfra.remote as remote
+use xinfra.secret as secret
 use xinfra.transport as transport
 
 proc execute(session: transport.Session, argv: List[Str], timeout_ms: Int? = null) -> Result[transport.ExecResult, Error] {
@@ -108,14 +109,30 @@ export proc apply_remote(
   }
   command += argv
   let timeout = duration_ms(spec.timeout ?? 0ms)
-  let ran = match execute(session, command, if timeout == 0 { null } else { timeout }) {
+  let wait_ms = if timeout == 0 { null } else { timeout }
+  let ran = if spec.stdin_secret != null {
+    let reference = spec.stdin_secret ?? model.FromEnv("")
+    let data = match secret.resolve(reference) {
+      Ok(value) => value,
+      Err(failure) => {
+        return Ok(result(host_name, spec.id, host.Failed, false, failure.message))
+      }
+    }
+    match transport.exec_stdin(session, command, data, wait_ms) {
+      Ok(value) => Ok(value),
+      Err(message) => Err(error.failure(message)),
+    }
+  } else {
+    execute(session, command, wait_ms)
+  }
+  let output = match ran {
     Ok(value) => value,
     Err(failure) => {
       return Ok(result(host_name, spec.id, host.Failed, false, failure.message))
     }
   }
-  if ran.exit_code != 0 {
-    return Ok(result(host_name, spec.id, host.Failed, false, text(ran.stderr).trim()))
+  if output.exit_code != 0 {
+    return Ok(result(host_name, spec.id, host.Failed, false, text(output.stderr).trim()))
   }
   Ok(result(host_name, spec.id, host.Changed, true))
 }

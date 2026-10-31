@@ -4,6 +4,7 @@ use xinfra.host
 use xinfra.model
 use xinfra.plan
 use xinfra.remote as remote
+use xinfra.secret as secret
 use xinfra.staging as staging
 use xinfra.transport as transport
 use xinfra.validate
@@ -45,11 +46,7 @@ proc verify_after(
   source: validate.PreparedSource,
   digest: Str,
 ) [fs, env, error] -> host.ApplyResult {
-  let verification_source = if validate.digest(source) == null {
-    validate.Local(validate.LocalSource(path: spec.path, digest: digest))
-  } else {
-    source
-  }
+  let verification_source = validate.Local(validate.LocalSource(path: spec.path, digest: digest))
   match ops.inspect_path(spec.path) {
     Err(failure) => host.result(
       ops,
@@ -292,11 +289,7 @@ proc remote_verify_after(
   source: validate.PreparedSource,
   digest: Str,
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  let verification_source = if validate.digest(source) == null {
-    validate.Local(validate.LocalSource(path: spec.path, digest: digest))
-  } else {
-    source
-  }
+  let verification_source = validate.Local(validate.LocalSource(path: spec.path, digest: digest))
   match remote.inspect_path(session, spec.path) {
     Err(failure) => remote_result(host_name, spec.id, host.Unknown, false, f"inspect after apply failed: {failure.message}"),
     Ok(inspection) => {
@@ -355,9 +348,9 @@ proc remote_apply_content(
   source: validate.PreparedSource,
   before: host.Inspection,
 ) [fs, env, process, error, io] -> host.ApplyResult {
-  let expected = validate.digest(source) ?? ""
-  if expected == "" {
-    return remote_result(host_name, spec.id, host.Failed, false, "secret file sources are R7")
+  let expected = match secret.digest(source) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"secret failed: {failure.message}") },
   }
 
   let staged = match remote.reserve_staging(session, spec.path) {
@@ -382,7 +375,8 @@ proc remote_apply_content(
     },
   }
 
-  match remote.set_metadata(session, staged, spec.mode, spec.owner, spec.group) {
+  let staged_mode = if secret.is_secret(source) { 0o600 } else { spec.mode }
+  match remote.set_metadata(session, staged, staged_mode, spec.owner, spec.group) {
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staged metadata failed: {failure.message}") },
     Ok(_) => {}
   }
@@ -409,6 +403,12 @@ proc remote_apply_content(
     Err(failure) => { return remote_finish_failure(session, host_name, spec, before, host.Failed, failure) },
     Ok(_) => {}
   }
+  if secret.is_secret(source) and spec.mode != 0o600 {
+    match remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group) {
+      Err(failure) => { return remote_result(host_name, spec.id, host.Partial, false, f"final metadata failed: {failure.message}") },
+      Ok(_) => {}
+    }
+  }
 
   remote_verify_after(session, host_name, spec, source, expected)
 }
@@ -423,6 +423,22 @@ export proc apply_remote(
   let inspection = match remote.inspect_path(session, spec.path) {
     Ok(value) => value,
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"inspect failed: {failure.message}") },
+  }
+  if source != null and secret.is_secret(source ?? validate.Secret(model.FromEnv(""))) {
+    let expected = match secret.digest(source ?? validate.Secret(model.FromEnv(""))) {
+      Ok(value) => value,
+      Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"secret failed: {failure.message}") },
+    }
+    match inspection {
+      host.Found(stat) => {
+        let owner_matches = spec.owner == null or spec.owner == stat.owner
+        let group_matches = spec.group == null or spec.group == stat.group
+        if stat.kind == "file" and stat.mode == spec.mode and owner_matches and group_matches and stat.digest == expected {
+          return remote_result(host_name, spec.id, host.Unchanged, true)
+        }
+      }
+      host.Missing => {}
+    }
   }
   let assessment = plan.assess(model.File(spec), source, host.observed(inspection))
   match assessment.prediction {

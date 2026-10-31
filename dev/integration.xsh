@@ -7,6 +7,7 @@ use integration.files as files_case
 use integration.lock as lock_case
 use integration.multi_host as multi_host_case
 use integration.packages as packages_case
+use integration.secrets as secrets_case
 use integration.services as services_case
 use integration.transport as transport_case
 use integration.users as users_case
@@ -83,7 +84,14 @@ cli main(case: Str = "all") [fs, process, env, time, error, io] {
     }
   }
 
-  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "files" and case != "packages" and case != "users" and case != "commands" and case != "services" and case != "commands,services" and case != "multi-host" and case != "ordering" and case != "cancel" and case != "lock" and case != "multi-host,ordering,lock,cancel" and case != "multi-host,ordering,cancel,lock" and case != "all" {
+  if case == "secrets" or case == "reporting" or case == "secrets,reporting" or case == "all" {
+    match secrets_case.check_secrets() {
+      Ok(_) => {}
+      Err(error) => fail error.message
+    }
+  }
+
+  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "files" and case != "packages" and case != "users" and case != "commands" and case != "services" and case != "commands,services" and case != "multi-host" and case != "ordering" and case != "cancel" and case != "lock" and case != "multi-host,ordering,lock,cancel" and case != "multi-host,ordering,cancel,lock" and case != "secrets" and case != "reporting" and case != "secrets,reporting" and case != "all" {
     fail f"unknown integration case {case}"
   }
 }

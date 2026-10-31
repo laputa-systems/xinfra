@@ -5,6 +5,7 @@ use xinfra.redact
 
 const SCHEMA_VERSION = 1
 const CONTROL = rx"[\x00-\x1f\x7f]|\xc2[\x80-\x9f]"
+const MAX_FIELD_BYTES = 4096
 
 ## The output style selected on the command line.
 export enum Style: Str {
@@ -128,7 +129,17 @@ pure sanitize(text: Str) -> Str {
 }
 
 pure safe(text: Str, redactor: redact.Redactor) -> Str {
-  sanitize(redact.redact(text, redactor))
+  let cleaned = sanitize(redact.redact(text, redactor))
+  if cleaned.byte_len() > MAX_FIELD_BYTES {
+    return cleaned.byte_slice(0, MAX_FIELD_BYTES) + "...[truncated]"
+  }
+  cleaned
+}
+
+## Keeps the primary failure when cleanup also failed.
+export pure primary_failure(primary: Str, cleanup: Str) -> Str {
+  let _ = cleanup
+  primary
 }
 
 ## Sanitizes and redacts one free-form message for diagnostics.
