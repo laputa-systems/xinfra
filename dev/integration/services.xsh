@@ -97,7 +97,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R5 service and notification matrix.
+## Executes the service and notification matrix.
 export proc check_services() [fs, process, env, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
   let name = "xinfra-r5"

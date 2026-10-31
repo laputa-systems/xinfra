@@ -63,7 +63,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R7 secret and reporting matrix.
+## Executes the secret and reporting matrix.
 export proc check_secrets() [fs, process, env, error, io] -> Result[Unit, Error] {
   let a = fixture("A")?
   let base = p"/home/xinfra/xinfra-r7"

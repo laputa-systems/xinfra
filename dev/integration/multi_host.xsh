@@ -45,7 +45,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R6 multi-host matrix.
+## Executes the multi-host matrix.
 export proc check_multi_host() [fs, process, env, time, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
   let b = fixture("B")?

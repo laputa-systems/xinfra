@@ -10,7 +10,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R8 saved-plan matrix.
+## Executes the saved-plan matrix.
 export proc check_plans() [fs, error] -> Result[Unit, Error] {
   let root = match fs.tempdir() {
     Ok(value) => value,

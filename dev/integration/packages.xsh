@@ -89,7 +89,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R4a package matrix.
+## Executes the package matrix.
 export proc check_packages() [fs, process, env, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
 

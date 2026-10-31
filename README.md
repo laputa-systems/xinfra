@@ -1,17 +1,18 @@
 # xinfra
 
 xinfra is a small configuration-management tool for Alpine hosts. It loads a
-typed inventory and deployment, compares desired state with observed state,
-and applies directories, files, symlinks, `apk` packages, users, groups,
-commands, and OpenRC services over a native SSH connection.
+typed inventory and deployment, compares desired state with observed state, and
+applies directories, files, symlinks, `apk` packages, users, groups, commands,
+and OpenRC services over a native SSH connection.
 
-The controller runs XSH scripts. The managed guest needs only a POSIX shell,
-BusyBox, `apk`, and OpenRC. It does not need Python, an agent, or a daemon.
+The controller runs XSH scripts. The managed host needs a POSIX shell, BusyBox,
+`apk`, OpenRC, and the shadow account tools. It does not need Python, an agent,
+or a daemon.
 
 ## Requirements
 
-- XSH with the `ssh` module. Every xinfra command loads the native SSH
-  surface, so an XSH build without that module fails at startup.
+- XSH with the `ssh` module. Every xinfra command loads that module, so an XSH
+  build without it fails at startup.
 - Alpine 3.23 or a compatible BusyBox/OpenRC host.
 - An unencrypted Ed25519 SSH key for the remote account.
 - Passwordless `doas` or `sudo` for resources that run as root.
@@ -56,10 +57,8 @@ host_key = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 Create a deployment module. A deployment only declares resources:
 
 ```xsh
-##! Web host.
 use xinfra.model
 
-## The declared resources.
 export pure resources() -> List[model.Resource] {
   [
     model.Package(model.PackageSpec(id: "nginx-pkg", name: "nginx")),
@@ -82,7 +81,7 @@ export pure resources() -> List[model.Resource] {
 }
 ```
 
-Then plan, inspect, and apply:
+Then plan, check, and apply:
 
 ```sh
 xinfra plan --inventory inventory.toml --deploy deploy.xsh
@@ -90,12 +89,13 @@ xinfra check --inventory inventory.toml --deploy deploy.xsh
 xinfra apply --inventory inventory.toml --deploy deploy.xsh
 ```
 
-`plan` and `check` never mutate the guest. `apply` stages file content beside
+`plan` and `check` never mutate the host. `apply` stages file content beside
 the destination, verifies it, and promotes it atomically. A second apply is a
-no-op.
+no-op unless a command sets `always_run`.
 
-See [trust and secrets](docs/security.md), [resources](docs/resources.md),
-[operations](docs/operations.md), and [platform support](docs/platform.md).
+Read [resources](docs/resources.md) to write deployments,
+[operations](docs/operations.md) to run them, [security](docs/security.md) for
+trust and secrets, and [platform](docs/platform.md) for supported systems.
 
 ## Commands
 
@@ -107,24 +107,15 @@ See [trust and secrets](docs/security.md), [resources](docs/resources.md),
 | `apply` | Apply the plan with the selected failure policy. |
 | `unlock` | Remove one host lock with an explicit force flag. |
 
-Global options include `--inventory`, `--deploy`, `--limit`, `--exclude`,
-`--format human|json|jsonl`, `--jobs N`, and `--on-error isolate|abort|continue`.
-Run `xinfra --help` or `xinfra <command> --help` for the complete list.
+Run `xinfra --help` or `xinfra <command> --help` for options. `--format`
+selects human, JSON, or JSONL output; [operations](docs/operations.md) documents
+the report schema and exit codes.
 
-Exit codes follow the operation: `0` success or compliant, `1` drift or a
-failed/blocked/unknown/partial result, `2` usage, validation, transport, or
-stale-plan failure.
+## Help
 
-## Development
+Report problems at <https://github.com/laputa-systems/xinfra/issues>.
 
-```sh
-make check        # static checks
-make test         # 100 unit and goldens
-make integration  # every remote scenario on the fixtures
-make differential # compare against pyinfra 3.10.0
-```
+## License
 
-`make fixtures` starts the disposable Lima guests, `make verify` probes them,
-and `make down` removes them. Fixture state lives under `.work`.
-
-See [compatibility](docs/compatibility.md) for the reference comparison.
+xinfra has no declared license yet; redistribution terms are undefined.
+Third-party notices are in [NOTICE](NOTICE).

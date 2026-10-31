@@ -90,7 +90,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R5 command matrix.
+## Executes the command matrix.
 export proc check_commands() [fs, process, env, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
   let base = p"/home/xinfra/xinfra-r5-commands"

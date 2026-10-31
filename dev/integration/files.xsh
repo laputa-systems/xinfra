@@ -83,7 +83,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R3b file matrix.
+## Executes the file matrix.
 export proc check_files() [fs, process, env, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
   let base = p"/home/xinfra/xinfra-r3b"

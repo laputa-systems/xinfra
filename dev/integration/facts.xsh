@@ -55,7 +55,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R2 fact matrix.
+## Executes the fact matrix.
 export proc execute() [fs, process, env, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
 

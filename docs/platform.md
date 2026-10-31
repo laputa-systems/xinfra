@@ -55,7 +55,7 @@ architecture is independent of guest architecture.
 | Commands | Yes | `/bin/sh` and the command itself |
 | OpenRC services | Yes | `rc-service`, `rc-update` |
 | Facts | Yes | POSIX tools |
-| Locks | Yes, library | Lock directory operations |
+| Locks | Yes | Lock directory operations |
 | Reports | Yes | No |
 | Python, pyinfra, or an agent | No | No |
 
@@ -82,9 +82,17 @@ exchange code with Graviola as the only cryptographic provider. It negotiates
 strict key exchange, pins a `SHA256:` host key, authenticates an Ed25519 key,
 and streams channel data with bounded windows.
 
+## Known gaps
+
+- `--jobs` is validated, but apply runs sequentially.
+- Saved plans record the xinfra version, not the XSH build commit.
+- A service notification adds a second result row with the service resource ID.
+
+The backlog is in [TODO](../TODO.md).
+
 ## Deliberate omissions
 
-- No Python, pyinfra, agent, daemon, or package on the managed guest.
+- No Python, pyinfra, agent, or daemon on the managed guest.
 - No systemd, apt, dnf, or non-Alpine package adapter.
 - No PTY allocation, port forwarding, SFTP, agent forwarding, password
   authentication, keyboard-interactive authentication, or SSH certificates.
@@ -95,5 +103,3 @@ and streams channel data with bounded windows.
 - No automatic retry after a submitted mutation.
 - No file-content capture in reports or plans.
 - No background reconciliation or periodic drift loop.
-- The CLI apply path is sequential and does not yet use `--jobs`.
-- Saved-plan pinning records the xinfra version, not the XSH build commit.

@@ -66,8 +66,9 @@ environment. Prefer `FromFile` when the controller environment is shared.
 
 A resource declares `privilege: model.AsRoot` when it writes a root-owned path
 or manages an account, package, or service. The remote driver detects
-passwordless `doas -n`, then `sudo -n`, once per connection. If neither works,
-the action fails with the observed state; it never reports success.
+passwordless `doas -n`, then `sudo -n`, once per connection. If neither works
+and the connection is not root, the action fails with the observed state; it
+never reports success.
 
 For `doas`, allow the deployment user to run commands without a password:
 
@@ -84,8 +85,8 @@ deploy ALL=(root) NOPASSWD: ALL
 ```
 
 Use a narrower rule when the deployment only needs specific commands. xinfra
-does not invoke a shell for `doas`/`sudo` setup; the operator installs and
-tests the rule.
+does not install or configure `doas` or `sudo`; the operator installs and tests
+the rule.
 
 The trusted-parent check runs before a create or replace. A group- or
 world-writable parent must be sticky and owned by the declared owner.

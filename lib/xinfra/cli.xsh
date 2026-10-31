@@ -139,7 +139,7 @@ Options:
   --deploy PATH      Deployment module.
   --limit LIST       Comma-separated host names or groups.
   --exclude LIST     Comma-separated host names or groups.
-  --jobs N           Apply concurrency, default 8, maximum 64.
+  --jobs N           Apply job limit, default 8, maximum 64; apply is sequential.
   --on-error POLICY  isolate, abort, or continue; default isolate.
   --format FORMAT    human, json, or jsonl; default human.
   --save-plan PATH   Write a versioned plan artifact.

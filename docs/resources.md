@@ -11,9 +11,9 @@ a deployment. `requires` lists resource IDs that must be applied first, and
 `hosts` limits a resource to host names or groups. A resource with an empty
 `hosts` list applies to every selected host.
 
-Every resource accepts `notify`, which names service resource IDs to run once
-after the resource changes. A service `on_change` selects `reload` or the
-default `restart`.
+Every resource except `ServiceResource` accepts `notify`, which names service
+resource IDs to run once after the resource changes. A service `on_change`
+selects `reload` or the default `restart`.
 
 ## Resource table
 
@@ -22,10 +22,10 @@ default `restart`.
 | `Directory` | `id`, `path` | Mode `0755`. Creates one directory below an existing trusted parent. `absent` removes an empty directory only. |
 | `File` | `id`, `path`, `source` when present | Mode `0644`. Exactly one source variant. Stages beside the destination, verifies digest and type, runs an optional validator, then promotes with `mv -T`. |
 | `Symlink` | `id`, `path`, `target` | Creates a symbolic link. A different target or a non-link is `blocked` unless `replace: true`. There is no mode or owner. |
-| `Package` | `id`, `name` | `apk` package. `constraint` accepts an exact version or `<`, `<=`, `>`, `>=`, or `~`. `refresh_index` runs `apk update` only during apply and reports it. |
+| `Package` | `id`, `name` | `apk` package. `constraint` accepts an exact version or `<`, `<=`, `>`, `>=`, or `~`. `refresh_index` runs `apk update` only during apply. |
 | `UserResource` | `id`, `name` | Creates with `useradd`; supports `uid`, `gid`, `groups`, `home`, `shell`, `system`, and `create_home`. Existing home, shell, or group changes require `update: true`. UID and GID changes are blocked. `absent` never removes a non-empty home. |
 | `GroupResource` | `id`, `name` | Creates with `groupadd`; supports `gid` and `system`. `absent` runs `groupdel`. |
-| `CommandResource` | `id`, and `argv` or `shell` | Runs every apply unless `creates` is present or `unless_argv` succeeds. `always_run` bypasses guards. `timeout` bounds the command. |
+| `CommandResource` | `id`, and `argv` or `shell` | Unchanged when `creates` exists or `unless_argv` exits zero. `always_run` runs it every apply. `timeout` bounds the command. |
 | `ServiceResource` | `id`, `name` | OpenRC service. `state` is `started` or `stopped`; `enabled` controls the default runlevel; `on_change` is `restart` or `reload`. |
 
 ## File sources
@@ -53,9 +53,10 @@ are passed through `env` and are visible to the remote process; do not put
 secrets there. `stdin_secret` streams resolved secret bytes to stdin.
 
 A command with `creates` is unchanged when the path exists. A command with
-`unless_argv` is unchanged when that argv exits zero. A command with neither,
-or with `always_run`, runs on every apply. Planning reads `creates` and refuses
-to run `unless_argv`, so an unrun guard is `unknown` and cannot be saved.
+`unless_argv` is unchanged when that argv exits zero. `always_run` runs the
+command on every apply; a command with neither guard nor `always_run` is
+rejected. Planning reads `creates` and refuses to run `unless_argv`, so an
+unrun guard is `unknown` and cannot be saved.
 
 ## Users and groups
 

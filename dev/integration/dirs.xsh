@@ -91,7 +91,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R3a directory and symlink matrix.
+## Executes the directory and symlink matrix.
 export proc check_dirs() [fs, process, env, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
   let base = p"/home/xinfra/xinfra-r3a"

@@ -99,7 +99,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R4b user and group matrix.
+## Executes the user and group matrix.
 export proc check_users() [fs, process, env, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
 

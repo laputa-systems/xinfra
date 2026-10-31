@@ -5,21 +5,21 @@
 `plan` loads the inventory, deployment, and local artifacts; reads remote
 facts; and prints ordered actions. It does not write to a host.
 
-`check` performs the same comparison and exits `1` when any action is needed.
-It does not write to a host.
+`check` performs the same comparison and reports drift. It does not write to a
+host.
 
 `apply` recomputes the plan, then applies each action in dependency order. A
 changed file or package notifies its declared services after the change. A
-second apply compares digests and modes and is a no-op.
+second apply compares digests and modes; only an `always_run` command repeats.
 
 Exit codes:
 
 | Code | Meaning |
 |---|---|
 | `0` | Success, or no drift for `check`. |
-| `1` | Drift, or any failed, blocked, unknown, or partial apply result. |
-| `2` | Usage, validation, transport, or stale-plan failure before or during computation. |
-| `130` | Interrupted. |
+| `1` | Drift; any failed, blocked, unknown, or partial apply result; an unhealthy doctor result; or a failed unlock. |
+| `2` | Usage, validation, or stale-plan failure; a transport failure before apply starts; or an indeterminate `check`. |
+| `130` | Interrupted apply. |
 
 ## Failure policy
 
@@ -58,9 +58,10 @@ source digest, each observed precondition, and the ordered action IDs, hosts,
 and operations. Secrets and secret values are absent.
 
 `apply --plan PATH` recomputes the deployment, inventory, facts, and actions,
-then rejects a changed source, observation, version, or action with exit `2`
-before mutation. A plan with an `unknown` action cannot be saved. Replan by
-running `plan --save-plan` again; an approval never widens silently.
+then rejects a changed deployment, inventory, source, observation, version, or
+action with exit `2` before mutation. A plan with an `unknown` action cannot be
+saved. Replan by running `plan --save-plan` again; an approval never widens
+silently.
 
 ## Locks
 
@@ -78,15 +79,16 @@ Acquire creates the directory with `mkdir` and writes the owner. A competing
 apply sees the existing owner and fails. Release removes the directory only
 when the caller's token matches.
 
-A stale lock is reclaimed only with the boot-id proof: the recorded boot ID
-must differ from the current `/proc/sys/kernel/random/boot_id`. Without that
-proof, reclaim requires an explicit forced unlock. The `lock` integration case
-covers one holder, boot-id reclamation, and forced release.
+The lock module can reclaim a lock only when the recorded boot ID differs from
+the current `/proc/sys/kernel/random/boot_id`; the `lock` integration case
+covers that path. `apply` does not attempt reclamation, even after a reboot, so
+a lock left by an interrupted run needs `xinfra unlock --host NAME --force`.
 
 `apply` acquires one lock per selected host before recomputing facts and
-releases it after the run. The privileged path is `/run/xinfra.lock`; without a
-passwordless elevator the lock is `$HOME/.cache/xinfra/lock`. Contention fails
-the apply with the owner details and exit `1`.
+releases it after the run. The privileged path is `/run/xinfra.lock`; a
+non-root user without a passwordless elevator locks
+`$HOME/.cache/xinfra/lock`. Contention fails the apply with the owner details
+and exit `1`.
 
 `xinfra unlock --inventory PATH --host NAME --force` connects to the host and
 removes that lock directory regardless of its owner. A removal failure exits

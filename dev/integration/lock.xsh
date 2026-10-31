@@ -37,7 +37,7 @@ pure test_case(label: Str) -> Str {
   f"ok {label}"
 }
 
-## Execute the R6 lock matrix.
+## Executes the lock matrix.
 export proc check_lock() [fs, process, env, time, error, io] -> Result[Unit, Str] {
   let a = fixture("A")?
   let lock_path = p"/home/xinfra/xinfra-r6-lock"

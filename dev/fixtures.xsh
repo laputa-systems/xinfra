@@ -1,5 +1,5 @@
 #!/usr/bin/env -S xsh --
-##! Disposable Alpine fixtures for the xinfra campaign.
+##! Disposable Alpine fixtures for integration and differential checks.
 
 const FIXTURES = ["xinfra-a", "xinfra-b"]
 const FIXTURE_USER = "xinfra"
