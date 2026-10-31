@@ -19,6 +19,11 @@ export type ExecResult = {
   certainty: Str,
 }
 
+## Whether a transport failure may have followed submission.
+export pure after_submission(message: Str) -> Bool {
+  "after submission" in message
+}
+
 ## Connect to one inventory host and authenticate with its Ed25519 key.
 export proc connect(host: inventory.Host, timeout_ms: Int = 10000) -> Result[Session, Str] {
   match ssh.connect({

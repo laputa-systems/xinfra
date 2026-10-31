@@ -201,6 +201,14 @@ proc remote_create_link(
   defer {
     let _ = remote.remove_path(session, staged, elevate)
   }
+  let removed = match remote.remove_path(session, staged, elevate) {
+    Ok(_) => Ok(),
+    Err(failure) => Err(failure),
+  }
+  match removed {
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staging cleanup failed: {failure.message}") },
+    Ok(_) => {}
+  }
 
   match remote.symlink(session, spec.target, staged, elevate) {
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"link creation failed: {failure.message}") },

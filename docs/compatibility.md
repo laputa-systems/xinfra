@@ -55,7 +55,7 @@ run again. A request for a missing package fails in both tools.
 | Command guards | Unconditional shell commands | `creates`, `unless_argv`, and `always_run`; plan never executes a guard |
 | Service status | Reads `rc-status` for the default runlevel | Reads `rc-service status` directly |
 | Failure policy | Stops the run on the first failed operation | `isolate`, `abort`, or `continue`, with per-host outcomes |
-| Saved plans | No versioned approval artifact | Version-1 artifact with source, deployment, inventory, pin, observation, and action checks |
+| Saved plans | No versioned approval artifact | Version-1 artifact with source, deployment, inventory, version, observation, and action checks |
 | Secrets | Inventory variables and templates | Env or file references resolved only at apply time; never in plans or reports |
 
 ## Verified pyinfra quirks

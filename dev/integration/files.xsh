@@ -154,6 +154,52 @@ export proc check_files() [fs, process, env, error, io] -> Result[Unit, Str] {
     require(listing.stdout.is_empty(), "failed transfer left owned staging")?
     print test_case("failed transfer preserves destination and cleans staging")
 
+    let local = match fs.tempdir() {
+      Ok(value) => value,
+      Err(error) => { return Err(error.message) },
+    }
+    let local_root = match local.host_path() {
+      Ok(value) => value,
+      Err(error) => { return Err(error.message) },
+    }
+    let changed_artifact = fp"{local_root}/artifact.txt"
+    match changed_artifact.write("planned\n") {
+      Ok(_) => {}
+      Err(error) => { return Err(error.message) },
+    }
+    let planned_digest = match hash.sha256(changed_artifact) {
+      Ok(value) => value.hex(),
+      Err(error) => { return Err(error.message) },
+    }
+    let planned_source = validate.Local(validate.LocalSource(path: changed_artifact, digest: planned_digest))
+    match changed_artifact.write("changed after planning\n") {
+      Ok(_) => {}
+      Err(error) => { return Err(error.message) },
+    }
+    let changed_spec = model.FileSpec(id: "changed-source", path: fp"{base}/changed-source", mode: 0o600)
+    let changed_source = file.apply_remote(session, a.host, changed_spec, planned_source)
+    require(changed_source.status == host.Failed, "a source changed after planning was applied")?
+    match inspect(session, fp"{base}/changed-source")? {
+      host.Missing => {}
+      host.Found(_) => return Err("a changed source created the destination"),
+    }
+    print test_case("source changes after planning are rejected")
+
+    let root_parent_path = p"/etc/xinfra-r3b-owned"
+    let _ = run_command(session, ["sudo", "-n", "sh", "-c", f"printf old > {root_parent_path.display()}; chown xinfra:xinfra {root_parent_path.display()}; chmod 644 {root_parent_path.display()}"])?
+    let root_spec = model.FileSpec(
+      id: "root-parent",
+      path: root_parent_path,
+      mode: 0o600,
+      privilege: model.AsRoot,
+    )
+    let root_result = file.apply_remote(session, a.host, root_spec, content("new\n"), ["sudo", "-n"])
+    require(root_result.status == host.Changed and root_result.verified, "app-owned child under a root parent failed")?
+    let root_stat = run_command(session, ["stat", "-c", "%U|%G|%a", root_parent_path.display()])?
+    require((root_stat.stdout.utf8() ?? "") == "xinfra|xinfra|600\n", "omitted owner or group was not preserved")?
+    let _ = run_command(session, ["sudo", "-n", "rm", "-f", root_parent_path.display()])?
+    print test_case("root parent and omitted ownership are preserved")
+
     let insecure = fp"{base}/insecure"
     let _ = run_command(session, ["mkdir", "-p", insecure.display()])?
     let _ = run_command(session, ["chmod", "777", insecure.display()])?

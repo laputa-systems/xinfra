@@ -73,6 +73,15 @@ proc satisfies(session: transport.Session, installed: Str, constraint: Str) -> R
   if constraint.starts_with("<") {
     return Ok(order == "<")
   }
+  if constraint.starts_with("~") {
+    let prefix = f"{target}."
+    return Ok(
+      installed == target or
+      installed.starts_with(prefix) or
+      installed.starts_with(f"{target}-") or
+      installed.starts_with(f"{target}_"),
+    )
+  }
   Ok(order == "=")
 }
 

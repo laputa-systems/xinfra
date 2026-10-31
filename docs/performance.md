@@ -45,14 +45,14 @@ the `crond` service.
 
 | Metric | xinfra | pyinfra 3.10.0 |
 |---|---:|---:|
-| Startup, median wall | 326 ms | 229 ms |
-| Startup, peak RSS | 78 MiB | 55 MiB |
-| First apply, wall | 954 ms | 678 ms |
-| First apply, peak RSS | 79 MiB | 58 MiB |
-| First apply, SSH connections | 15 | 2 |
-| Second apply, wall | 643 ms | 380 ms |
-| Second apply, peak RSS | 80 MiB | 58 MiB |
-| Second apply, SSH connections | 15 | 2 |
+| Startup, median wall | 361 ms | 229 ms |
+| Startup, peak RSS | 85 MiB | 55 MiB |
+| First apply, wall | 1116 ms | 654 ms |
+| First apply, peak RSS | 86 MiB | 58 MiB |
+| First apply, SSH connections | 24 | 2 |
+| Second apply, wall | 830 ms | 368 ms |
+| Second apply, peak RSS | 88 MiB | 58 MiB |
+| Second apply, SSH connections | 24 | 2 |
 
 Supporting measurements:
 
@@ -60,17 +60,18 @@ Supporting measurements:
 |---|---:|
 | SSH handshake and authentication | 14 ms |
 | Remote `true` round trip | 1 ms |
-| Local module load, validation, and plan | 4 ms |
+| Local module load, validation, and plan | 3 ms |
 
 ## Interpretation
 
 xinfra startup and no-op cost more than pyinfra on this run. The controller
-opens one short-lived SSH session for each observation and each action, so a
-seven-resource deployment makes 15 connections: seven during fact collection,
-seven during apply, and one coalesced service restart. pyinfra made two
-connections. Each handshake measured about 14 ms, and the local plan measured
-about 4 ms, so the connection count, not XSH evaluation, accounts for most of
-the gap.
+opens one short-lived SSH session for each observation and each action. A
+seven-resource deployment makes 24 connections: seven for the initial fact
+collection, one to acquire the host lock, seven to re-read facts under the
+lock, seven during apply, one coalesced service restart, and one to release the
+lock. pyinfra made two connections. Each handshake measured about 14 ms, and
+the local plan measured about 3 ms, so the connection count, not XSH
+evaluation, accounts for most of the gap.
 
 The first apply is slower than the second in both tools because it installs a
 package and creates an account. The native client is not claimed to be faster

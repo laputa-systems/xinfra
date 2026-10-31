@@ -19,8 +19,8 @@ proc text(value: Bytes) -> Str {
   value.utf8() ?? ""
 }
 
-proc execute(session: transport.Session, argv: List[Str]) -> Result[transport.ExecResult, Str] {
-  transport.exec(session, argv)
+proc execute(session: transport.Session, argv: List[Str], elevate: List[Str] = []) -> Result[transport.ExecResult, Str] {
+  transport.exec(session, elevate + argv)
 }
 
 proc boot_id(session: transport.Session) -> Result[Str, Str] {
@@ -31,8 +31,8 @@ proc boot_id(session: transport.Session) -> Result[Str, Str] {
   Ok(text(result.stdout).trim())
 }
 
-proc read_owner(session: transport.Session, lock_path: Path) -> Result[Owner?, Str] {
-  let result = execute(session, ["cat", f"{lock_path.display()}/owner"])?
+proc read_owner(session: transport.Session, lock_path: Path, elevate: List[Str] = []) -> Result[Owner?, Str] {
+  let result = execute(session, ["cat", f"{lock_path.display()}/owner"], elevate)?
   if result.exit_code != 0 {
     return Ok(null)
   }
@@ -55,8 +55,8 @@ proc read_owner(session: transport.Session, lock_path: Path) -> Result[Owner?, S
   Ok(Owner(token: token, pid: pid, boot: boot, start: start, host: host))
 }
 
-proc write_owner(session: transport.Session, lock_path: Path, owner: Owner) -> Result[Unit, Str] {
-  let result = transport.write_bytes(session, fp"{lock_path}/owner", bytes.from_text(owner_text(owner)))?
+proc write_owner(session: transport.Session, lock_path: Path, owner: Owner, elevate: List[Str] = []) -> Result[Unit, Str] {
+  let result = transport.write_bytes(session, fp"{lock_path}/owner", bytes.from_text(owner_text(owner)), null, elevate)?
   if result.exit_code != 0 {
     return Err(text(result.stderr).trim())
   }
@@ -70,9 +70,10 @@ export proc acquire(
   token: Str,
   host_name: Str,
   steal: Bool = false,
+  elevate: List[Str] = [],
 ) -> Result[Str, Str] {
   let current_boot = boot_id(session)?
-  let claimed = execute(session, ["mkdir", lock_path.display()])?
+  let claimed = execute(session, ["mkdir", lock_path.display()], elevate)?
   if claimed.exit_code == 0 {
     let owner = Owner(
       token: token,
@@ -81,18 +82,18 @@ export proc acquire(
       start: time.now(),
       host: host_name,
     )
-    write_owner(session, lock_path, owner)?
+    write_owner(session, lock_path, owner, elevate)?
     return Ok(token)
   }
 
-  let owner = read_owner(session, lock_path)?
+  let owner = read_owner(session, lock_path, elevate)?
   if owner == null {
     return Err(f"lock {lock_path.display()} exists without an owner")
   }
   let current = owner ?? Owner(token: "", pid: 0, boot: "", start: 0, host: "")
   if steal and current.boot != current_boot {
-    let _ = execute(session, ["rm", "-rf", lock_path.display()])?
-    let reclaimed = execute(session, ["mkdir", lock_path.display()])?
+    let _ = execute(session, ["rm", "-rf", lock_path.display()], elevate)?
+    let reclaimed = execute(session, ["mkdir", lock_path.display()], elevate)?
     if reclaimed.exit_code == 0 {
       let replacement = Owner(
         token: token,
@@ -101,7 +102,7 @@ export proc acquire(
         start: time.now(),
         host: host_name,
       )
-      write_owner(session, lock_path, replacement)?
+      write_owner(session, lock_path, replacement, elevate)?
       return Ok(token)
     }
   }
@@ -109,15 +110,15 @@ export proc acquire(
 }
 
 ## Release a lock only when the caller still owns it.
-export proc release(session: transport.Session, lock_path: Path, token: Str) -> Result[Unit, Str] {
-  let owner = read_owner(session, lock_path)?
+export proc release(session: transport.Session, lock_path: Path, token: Str, elevate: List[Str] = []) -> Result[Unit, Str] {
+  let owner = read_owner(session, lock_path, elevate)?
   if owner == null {
     return Err("lock is not held")
   }
   if (owner ?? Owner(token: "", pid: 0, boot: "", start: 0, host: "")).token != token {
     return Err("lock owner token differs")
   }
-  let removed = execute(session, ["rm", "-rf", lock_path.display()])?
+  let removed = execute(session, ["rm", "-rf", lock_path.display()], elevate)?
   if removed.exit_code != 0 {
     return Err(text(removed.stderr).trim())
   }
@@ -125,8 +126,8 @@ export proc release(session: transport.Session, lock_path: Path, token: Str) -> 
 }
 
 ## Remove a lock regardless of its owner.
-export proc unlock_force(session: transport.Session, lock_path: Path) -> Result[Unit, Str] {
-  let removed = execute(session, ["rm", "-rf", lock_path.display()])?
+export proc unlock_force(session: transport.Session, lock_path: Path, elevate: List[Str] = []) -> Result[Unit, Str] {
+  let removed = execute(session, ["rm", "-rf", lock_path.display()], elevate)?
   if removed.exit_code != 0 {
     return Err(text(removed.stderr).trim())
   }
@@ -134,6 +135,6 @@ export proc unlock_force(session: transport.Session, lock_path: Path) -> Result[
 }
 
 ## Read the current lock owner, if any.
-export proc owner(session: transport.Session, lock_path: Path) -> Result[Owner?, Str] {
-  read_owner(session, lock_path)
+export proc owner(session: transport.Session, lock_path: Path, elevate: List[Str] = []) -> Result[Owner?, Str] {
+  read_owner(session, lock_path, elevate)
 }

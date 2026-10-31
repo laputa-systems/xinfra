@@ -53,17 +53,14 @@ because the first mutation may have reached the host.
 ## Saved plans
 
 `plan --save-plan PATH` writes schema-version-1 JSON containing the deployment
-path and digest, inventory path and digest, and the ordered action IDs, hosts,
-and operations. Secrets and observed facts are absent.
+path and digest, inventory path and digest, xinfra version, each prepared
+source digest, each observed precondition, and the ordered action IDs, hosts,
+and operations. Secrets and secret values are absent.
 
 `apply --plan PATH` recomputes the deployment, inventory, facts, and actions,
-then rejects a mismatch with exit `2` before mutation. A plan with an `unknown`
-action cannot be saved. Replan by running `plan --save-plan` again; an approval
-never widens silently.
-
-The stricter artifact in `lib/xinfra/plan_artifact.xsh` also records source
-digests, the XSH pin, and each observed precondition. It is exercised by the
-`stale-plan` integration case but is not yet the CLI artifact format.
+then rejects a changed source, observation, version, or action with exit `2`
+before mutation. A plan with an `unknown` action cannot be saved. Replan by
+running `plan --save-plan` again; an approval never widens silently.
 
 ## Locks
 
@@ -86,9 +83,14 @@ must differ from the current `/proc/sys/kernel/random/boot_id`. Without that
 proof, reclaim requires an explicit forced unlock. The `lock` integration case
 covers one holder, boot-id reclamation, and forced release.
 
-The CLI currently reports `unlock --host NAME --force` without contacting the
-host or removing a lock directory. Use the lock module or remove the lock with
-the host operator until that command is wired.
+`apply` acquires one lock per selected host before recomputing facts and
+releases it after the run. The privileged path is `/run/xinfra.lock`; without a
+passwordless elevator the lock is `$HOME/.cache/xinfra/lock`. Contention fails
+the apply with the owner details and exit `1`.
+
+`xinfra unlock --inventory PATH --host NAME --force` connects to the host and
+removes that lock directory regardless of its owner. A removal failure exits
+`1`.
 
 ## Report schema
 

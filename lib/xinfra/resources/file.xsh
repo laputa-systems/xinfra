@@ -379,8 +379,22 @@ proc remote_apply_content(
     },
   }
 
+  let effective_owner = match before {
+    host.Found(stat) => match spec.owner {
+      null => stat.owner,
+      value => value,
+    },
+    host.Missing => spec.owner,
+  }
+  let effective_group = match before {
+    host.Found(stat) => match spec.group {
+      null => stat.group,
+      value => value,
+    },
+    host.Missing => spec.group,
+  }
   let staged_mode = if secret.is_secret(source) { 0o600 } else { spec.mode }
-  match remote.set_metadata(session, staged, staged_mode, spec.owner, spec.group, elevate) {
+  match remote.set_metadata(session, staged, staged_mode, effective_owner, effective_group, elevate) {
     Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staged metadata failed: {failure.message}") },
     Ok(_) => {}
   }
@@ -408,7 +422,7 @@ proc remote_apply_content(
     Ok(_) => {}
   }
   if secret.is_secret(source) and spec.mode != 0o600 {
-    match remote.set_metadata(session, spec.path, spec.mode, spec.owner, spec.group, elevate) {
+    match remote.set_metadata(session, spec.path, spec.mode, effective_owner, effective_group, elevate) {
       Err(failure) => { return remote_result(host_name, spec.id, host.Partial, false, f"final metadata failed: {failure.message}") },
       Ok(_) => {}
     }

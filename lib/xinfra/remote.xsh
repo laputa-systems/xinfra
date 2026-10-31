@@ -142,21 +142,12 @@ export proc parent_secure(session: transport.Session, host_path: Path, expected_
       if stat.kind != "dir" {
         return Ok(false)
       }
-      let writable = stat.mode.bit_and(0o022) != 0
-      if writable and ! (stat.mode.bit_and(0o1000) != 0 and stat.owner == expected_owner) {
-        return Ok(false)
+      if stat.mode.bit_and(0o022) != 0 {
+        if stat.mode.bit_and(0o1000) == 0 or stat.owner != expected_owner {
+          return Ok(false)
+        }
       }
-      match expected_owner {
-        null => Ok(true),
-        name => {
-          let owner_name = name ?? ""
-          let result = execute(session, ["id", "-u", owner_name], elevate)?
-          if result.exit_code != 0 {
-            return Ok(false)
-          }
-          Ok(text(result.stdout).trim().parse_int()? == stat.uid)
-        },
-      }
+      Ok(true)
     },
   }
 }
@@ -183,8 +174,6 @@ export proc reserve_staging(session: transport.Session, destination: Path, eleva
   let created = execute(session, ["mktemp", "-p", parent, ".xinfra.XXXXXX"], elevate)?
   return Err(error.failure(text(created.stderr).trim())) when created.exit_code != 0
   let staging = text(created.stdout).trim()
-  let removed = execute(session, ["rm", "-f", staging], elevate)?
-  return Err(error.failure(text(removed.stderr).trim())) when removed.exit_code != 0
   Ok(fp"{staging}")
 }
 
@@ -193,10 +182,13 @@ export proc set_metadata(session: transport.Session, host_path: Path, mode: Int,
   let location = remote_path(host_path)?
   let changed = execute(session, ["chmod", octal(mode), location], elevate)?
   return Err(error.failure(text(changed.stderr).trim())) when changed.exit_code != 0
-  if owner != null or group_name != null {
-    let spec = f"{owner ?? ""}:{group_name ?? ""}"
-    let chowned = execute(session, ["chown", spec, location], elevate)?
+  if owner != null {
+    let chowned = execute(session, ["chown", owner ?? "", location], elevate)?
     return Err(error.failure(text(chowned.stderr).trim())) when chowned.exit_code != 0
+  }
+  if group_name != null {
+    let chgrped = execute(session, ["chgrp", group_name ?? "", location], elevate)?
+    return Err(error.failure(text(chgrped.stderr).trim())) when chgrped.exit_code != 0
   }
   Ok()
 }

@@ -105,7 +105,7 @@ See [trust and secrets](docs/security.md), [resources](docs/resources.md),
 | `plan` | Compute ordered actions without touching a host. |
 | `check` | Report drift; exit 1 when any action is needed. |
 | `apply` | Apply the plan with the selected failure policy. |
-| `unlock` | Report an explicit forced lock release for one host. |
+| `unlock` | Remove one host lock with an explicit force flag. |
 
 Global options include `--inventory`, `--deploy`, `--limit`, `--exclude`,
 `--format human|json|jsonl`, `--jobs N`, and `--on-error isolate|abort|continue`.

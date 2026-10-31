@@ -487,6 +487,48 @@ test test_apply_abort_and_continue_policies { |ctx|
   }
 }
 
+test test_blocked_dependencies_do_not_run { |ctx|
+  let inventory_file = write_inventory(
+    ctx,
+    "cli-dependency-inv",
+    [HostSeed(name: "web-1", groups: ["web"], address: "192.0.2.10")],
+  )?
+  let fixture = deployment(
+    ctx,
+    "cli-dependency-deploy",
+    """[
+  model.Directory(model.DirectorySpec(id: "parent", path: p"/missing/child")),
+  model.Directory(model.DirectorySpec(id: "dependent", path: p"/srv/dependent", requires: ["parent"])),
+  model.Directory(model.DirectorySpec(id: "last", path: p"/srv/last", requires: ["dependent"])),
+]""",
+  )?
+  let fake_root = test.temp_dir(ctx, "cli-dependency-root")?
+  env XINFRA_FAKE_ROOT=f"{fake_root}" {
+    fake.reset()?
+    let result = invoke(
+      [
+        "apply",
+        "--inventory",
+        inventory_file.display(),
+        "--deploy",
+        fixture.file.display(),
+        "--on-error",
+        "continue",
+        "--format",
+        "json",
+      ],
+      fake.host(),
+      fixture.root,
+      "run-dependency",
+    )
+    test.eq(result.exit, 1, result.stderr)?
+    let decoded = decoded_report(result)?
+    test.eq(decoded.summary.failed, 1)?
+    test.eq(decoded.summary.blocked, 2)?
+    test.eq(decoded.summary.changed, 0)?
+  }
+}
+
 test test_saved_plan_round_trip_and_stale_rejection { |ctx|
   let inventory_file = write_inventory(
     ctx,

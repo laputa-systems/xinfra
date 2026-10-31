@@ -9,6 +9,8 @@ use xinfra.outcome
 use xinfra.plan
 use xinfra.redact
 use xinfra.report
+use xinfra.secret
+use xinfra.transport
 use xinfra.resources.dir
 use xinfra.resources.file
 use xinfra.resources.symlink
@@ -57,6 +59,7 @@ export type Computed = {
   deployment: validate.Deployment,
   deployment_file: Path,
   inventory_file: Path,
+  facts: plan.Facts,
   actions: List[plan.Action],
 }
 
@@ -66,10 +69,16 @@ export type Applied = {result: host.ApplyResult, duration_ms: Int}
 ## A long option split into its name and optional inline value.
 export type SplitOption = {name: Str, value: Str?}
 
-## The version-1 saved-plan artifact.
+## One planned action in a saved plan.
 export type PlanAction = {id: Str, host: Str, operation: Str}
 
-## A saved plan without secrets or observed facts.
+## One prepared source digest in a saved plan.
+export type PlanSource = {id: Str, digest: Str}
+
+## One observed precondition in a saved plan.
+export type PlanObservation = {host: Str, resource: Str, fact: Str}
+
+## The version-1 saved-plan artifact.
 export type PlanArtifact = {
   schema_version: Int,
   kind: Str,
@@ -78,6 +87,9 @@ export type PlanArtifact = {
   inventory: Str,
   deployment_digest: Str,
   inventory_digest: Str,
+  version: Str,
+  sources: List[PlanSource],
+  observations: List[PlanObservation],
   actions: List[PlanAction],
 }
 
@@ -113,10 +125,10 @@ Usage:
   xinfra plan --inventory PATH --deploy PATH [--limit LIST] [--exclude LIST] [--save-plan PATH] [--format FORMAT]
   xinfra apply --inventory PATH --deploy PATH [--plan PATH] [--limit LIST] [--exclude LIST] [--jobs N] [--on-error POLICY] [--format FORMAT]
   xinfra check --inventory PATH --deploy PATH [--limit LIST] [--exclude LIST] [--format FORMAT]
-  xinfra unlock --host NAME --force
+  xinfra unlock --inventory PATH --host NAME --force
 
 Commands:
-  doctor   Validate configuration and report host health.
+  doctor   Validate configuration and list selected hosts.
   plan     Compute ordered actions without touching a host.
   apply    Apply the computed actions.
   check    Report drift without mutating.
@@ -142,7 +154,7 @@ Options:
 ## Returns usage text for one subcommand.
 export pure command_help(command: Subcommand) -> Str {
   match command {
-    Doctor => """xinfra doctor — validate configuration and report host health
+    Doctor => """xinfra doctor — validate configuration and list selected hosts
 
 Usage:
   xinfra doctor --inventory PATH [--deploy PATH] [--format human|json|jsonl]
@@ -177,7 +189,7 @@ Exit codes: 0 compliant, 1 drift, 2 unknown or error.
     Unlock => """xinfra unlock — clear a host lock with an explicit force flag
 
 Usage:
-  xinfra unlock --host NAME --force [--format human|json|jsonl]
+  xinfra unlock --inventory PATH --host NAME --force [--format human|json|jsonl]
 
 Exit codes: 0 success, 2 usage.
 """,
@@ -227,10 +239,7 @@ pure parse_jobs(value: Str) -> Result[Int, model.Problem] {
 }
 
 pure allows_inventory(command: Subcommand) -> Bool {
-  match command {
-    Unlock => false,
-    _ => true,
-  }
+  true
 }
 
 pure allows_deploy(command: Subcommand) -> Bool {
@@ -534,7 +543,7 @@ proc gather_facts(
   allow_remote: Bool,
   deployment: validate.Deployment,
   selected: inventory.Inventory,
-) [fs, env, process, io, error] -> plan.Facts {
+) [fs, env, process, io, error] -> Result[plan.Facts, model.Problem] {
   if ops == null {
     if ! allow_remote {
       var names: List[Str] = []
@@ -542,7 +551,7 @@ proc gather_facts(
         names += [entry.name]
       }
 
-      return plan.empty_facts(names)
+      return Ok(plan.empty_facts(names))
     }
 
     var entries: List[plan.HostFacts] = []
@@ -552,14 +561,20 @@ proc gather_facts(
         if model.applies_to(resource, entry.name, entry.groups) {
           let value = match driver.observe(entry, resource) {
             Ok(value) => value,
-            Err(_) => plan.Unknown,
+            Err(failure) => {
+              return Err(problem(
+                "transport",
+                f"cannot read {model.identity(resource)} on {entry.name}: {failure.message}",
+                field: "transport",
+              ))
+            },
           }
           observed = observed.set(model.identity(resource), value)
         }
       }
       entries += [plan.HostFacts(name: entry.name, observed: observed)]
     }
-    return plan.Facts(hosts: entries)
+    return Ok(plan.Facts(hosts: entries))
   }
 
   let handle = ops
@@ -575,7 +590,7 @@ proc gather_facts(
     entries += [plan.HostFacts(name: entry.name, observed: observed)]
   }
 
-  plan.Facts(hosts: entries)
+  Ok(plan.Facts(hosts: entries))
 }
 
 proc compute(
@@ -598,7 +613,7 @@ proc compute(
   let loaded = load_inventory(inventory_file)?
   let selected = select_hosts(loaded, options.limit, options.exclude)?
   let deployment = validate.load(deploy_file, loaded, root)?
-  let facts = gather_facts(ops, allow_remote, deployment, selected)
+  let facts = gather_facts(ops, allow_remote, deployment, selected)?
   let actions = plan.plan(deployment, selected, facts)
   Ok(
     Computed(
@@ -606,6 +621,7 @@ proc compute(
       deployment: deployment,
       deployment_file: deploy_file,
       inventory_file: inventory_file,
+      facts: facts,
       actions: actions,
     ),
   )
@@ -696,6 +712,36 @@ export proc apply_actions(
           duration_ms: 0,
         ),
       ]
+      if ! skipped {
+        failed = failed.set(action.host, host_failures.add(action.id))
+        if policy == Isolate {
+          stopped = stopped.add(action.host)
+        } else if policy == Abort {
+          aborted = true
+        }
+      }
+      continue
+    }
+
+    if action.prediction == plan.Blocked {
+      applied += [
+        Applied(
+          result: host.ApplyResult(
+            id: action.id,
+            host: action.host,
+            status: host.Blocked,
+            verified: false,
+            cause: action.cause ?? "blocked by the current plan",
+          ),
+          duration_ms: 0,
+        ),
+      ]
+      failed = failed.set(action.host, host_failures.add(action.id))
+      if policy == Isolate {
+        stopped = stopped.add(action.host)
+      } else if policy == Abort {
+        aborted = true
+      }
       continue
     }
 
@@ -754,11 +800,61 @@ pure plan_actions(actions: List[plan.Action]) -> List[PlanAction] {
   entries
 }
 
+pure optional_bool(value: Bool?) -> Str {
+  if value == null {
+    return "?"
+  }
+  if value ?? false {
+    return "yes"
+  }
+  "no"
+}
+
+pure observed_text(value: plan.Observed) -> Str {
+  match value {
+    plan.Absent => "absent"
+    plan.Existing(facts) => f"existing:{facts.kind}:{facts.mode}:{facts.owner ?? ""}:{facts.group ?? ""}:{facts.digest ?? ""}:{facts.target?.display() ?? ""}:{facts.empty}"
+    plan.Installed(facts) => f"installed:{facts.version ?? ""}:{optional_bool(facts.satisfies)}"
+    plan.Account(facts) => f"account:{facts.uid}:{facts.gid}:{facts.groups.join(",")}:{facts.home?.display() ?? ""}:{facts.shell?.display() ?? ""}"
+    plan.Role(facts) => f"role:{facts.gid}"
+    plan.Invocation(facts) => f"invocation:{optional_bool(facts.creates_present)}:{optional_bool(facts.unless_satisfied)}"
+    plan.Running(facts) => f"running:{facts.started}:{optional_bool(facts.enabled)}"
+    plan.Unknown => "unknown"
+  }
+}
+
+pure plan_sources(deployment: validate.Deployment) -> List[PlanSource] {
+  var sources: List[PlanSource] = []
+  for {key: id, value: source} in deployment.sources {
+    let digest = validate.digest(source)
+    if digest != null {
+      sources += [PlanSource(id: id, digest: digest ?? "")]
+    }
+  }
+  sources
+}
+
+pure plan_observations(facts: plan.Facts) -> List[PlanObservation] {
+  var observations: List[PlanObservation] = []
+  for host in facts.hosts {
+    let resources = host.observed.keys() |> sort() |> collect()
+    for resource in resources {
+      match host.observed.get(resource) {
+        Ok(value) => { observations += [PlanObservation(host: host.name, resource: resource, fact: observed_text(value))] }
+        Err(_) => {}
+      }
+    }
+  }
+  observations
+}
+
 proc save_plan(
   target: Path,
   run_id: Str,
   deployment_file: Path,
   inventory_file: Path,
+  deployment: validate.Deployment,
+  facts: plan.Facts,
   actions: List[plan.Action],
 ) [fs, error] -> Result[Unit, model.Problem] {
   for action in actions {
@@ -777,6 +873,9 @@ proc save_plan(
     inventory: inventory_file.display(),
     deployment_digest: deployment_digest,
     inventory_digest: inventory_digest,
+    version: version.VERSION,
+    sources: plan_sources(deployment),
+    observations: plan_observations(facts),
     actions: plan_actions(actions),
   )
   match json.write(target, artifact, pretty: true) {
@@ -793,7 +892,12 @@ proc load_plan(target: Path) [fs, error] -> Result[PlanArtifact, model.Problem] 
     },
   }
   match raw.require_exact(PlanArtifact) {
-    Ok(value) => Ok(value),
+    Ok(value) => {
+      if value.schema_version != 1 or value.kind != "plan" {
+        return Err(problem("stale-plan", "saved plan schema or kind is not supported", field: "plan"))
+      }
+      Ok(value)
+    }
     Err(failure) => Err(problem("stale-plan", failure.message, field: "plan")),
   }
 }
@@ -802,6 +906,8 @@ proc check_plan(
   artifact: PlanArtifact,
   deployment_file: Path,
   inventory_file: Path,
+  deployment: validate.Deployment,
+  facts: plan.Facts,
   actions: List[plan.Action],
 ) [fs, error] -> Result[Unit, model.Problem] {
   let deployment_digest = digest_file(deployment_file)?
@@ -812,6 +918,18 @@ proc check_plan(
 
   if artifact.inventory_digest != inventory_digest {
     return Err(problem("stale-plan", "inventory changed since the plan was saved", field: "plan"))
+  }
+
+  if artifact.version != version.VERSION {
+    return Err(problem("stale-plan", "xinfra version changed since the plan was saved", field: "plan"))
+  }
+
+  if artifact.sources != plan_sources(deployment) {
+    return Err(problem("stale-plan", "a source changed since the plan was saved", field: "plan"))
+  }
+
+  if artifact.observations != plan_observations(facts) {
+    return Err(problem("stale-plan", "an observed precondition changed since the plan was saved", field: "plan"))
   }
 
   if artifact.actions != plan_actions(actions) {
@@ -894,7 +1012,7 @@ proc run_plan(
 ) [fs, error] -> Execution {
   if options.save_plan != null {
     let target = options.save_plan ?? p""
-    match save_plan(target, run_id, computed.deployment_file, computed.inventory_file, computed.actions) {
+    match save_plan(target, run_id, computed.deployment_file, computed.inventory_file, computed.deployment, computed.facts, computed.actions) {
       Ok(_) => {}
       Err(failure) => {
         return execution(2, "", report.clean(failure.message, redactor) + "\n")
@@ -991,6 +1109,36 @@ proc apply_actions_remote(
           duration_ms: 0,
         ),
       ]
+      if ! skipped {
+        failed = failed.set(action.host, host_failures.add(action.id))
+        if policy == Isolate {
+          stopped = stopped.add(action.host)
+        } else if policy == Abort {
+          aborted = true
+        }
+      }
+      continue
+    }
+
+    if action.prediction == plan.Blocked {
+      applied += [
+        Applied(
+          result: host.ApplyResult(
+            id: action.id,
+            host: action.host,
+            status: host.Blocked,
+            verified: false,
+            cause: action.cause ?? "blocked by the current plan",
+          ),
+          duration_ms: 0,
+        ),
+      ]
+      failed = failed.set(action.host, host_failures.add(action.id))
+      if policy == Isolate {
+        stopped = stopped.add(action.host)
+      } else if policy == Abort {
+        aborted = true
+      }
       continue
     }
 
@@ -1001,7 +1149,7 @@ proc apply_actions_remote(
         Err(failure) => host.ApplyResult(
           id: action.id,
           host: action.host,
-          status: host.Failed,
+          status: if transport.after_submission(failure.message) { host.Unknown } else { host.Failed },
           verified: false,
           cause: failure.message,
         ),
@@ -1033,10 +1181,27 @@ proc apply_actions_remote(
       changed_by_host = changed_by_host.set(actions[index].host, ids + [actions[index].id])
     }
   }
+  var service_status: Map[Str, host.ApplyStatus] = map.empty()
+  for index in range(actions.len()) {
+    match actions[index].resource {
+      model.ServiceResource(spec) => {
+        service_status = service_status.set(f"{actions[index].host}:{spec.id}", applied[index].result.status)
+      }
+      _ => {}
+    }
+  }
+
   let resources = actions |> map .resource
   for action in actions {
     match action.resource {
       model.ServiceResource(spec) => {
+        if aborted or action.host in stopped or spec.state != model.Started {
+          continue
+        }
+        let status = service_status.get(f"{action.host}:{spec.id}") ?? host.Unknown
+        if status != host.Changed and status != host.Unchanged {
+          continue
+        }
         let changed_ids = changed_by_host.get(action.host) ?? []
         if spec.id in notify.coalesce(changed_ids, resources) {
           let started = time.monotonic()?
@@ -1046,7 +1211,7 @@ proc apply_actions_remote(
               Err(failure) => host.ApplyResult(
                 id: spec.id,
                 host: action.host,
-                status: host.Failed,
+                status: if transport.after_submission(failure.message) { host.Unknown } else { host.Failed },
                 verified: false,
                 cause: failure.message,
               ),
@@ -1060,7 +1225,14 @@ proc apply_actions_remote(
             ),
           }
           let elapsed = (time.monotonic()? - started) / 1000000
-          applied += [Applied(result: with_host(result, action.host), duration_ms: elapsed)]
+          let identified = host.ApplyResult(
+            id: spec.id,
+            host: action.host,
+            status: result.status,
+            verified: result.verified,
+            cause: result.cause,
+          )
+          applied += [Applied(result: identified, duration_ms: elapsed)]
         }
       }
       _ => {}
@@ -1070,27 +1242,34 @@ proc apply_actions_remote(
   applied
 }
 
-proc run_apply(
+proc release_locks(hosts: List[inventory.Host], run_id: Str) [fs, process, io, error] {
+  for entry in hosts {
+    let token = f"{run_id}:{entry.name}"
+    let _ = driver.release_lock(entry, token)
+  }
+}
+
+proc run_apply_locked(
   options: Options,
   computed: Computed,
   ops: host.HostOps?,
   allow_remote: Bool,
   root: Path,
   run_id: Str,
-  redactor: redact.Redactor,
+  secured: redact.Redactor,
 ) [fs, env, time, process, io, error] -> Execution {
   if options.plan != null {
     let plan_file = options.plan ?? p""
     let artifact = match load_plan(plan_file) {
       Ok(value) => value,
       Err(failure) => {
-        return execution(2, "", report.clean(failure.message, redactor) + "\n")
+        return execution(2, "", report.clean(failure.message, secured) + "\n")
       },
     }
-    match check_plan(artifact, computed.deployment_file, computed.inventory_file, computed.actions) {
+    match check_plan(artifact, computed.deployment_file, computed.inventory_file, computed.deployment, computed.facts, computed.actions) {
       Ok(_) => {}
       Err(failure) => {
-        return execution(2, "", report.clean(failure.message, redactor) + "\n")
+        return execution(2, "", report.clean(failure.message, secured) + "\n")
       },
     }
   }
@@ -1111,16 +1290,105 @@ proc run_apply(
   }
 
   let exit_code = outcome.apply_exit(outcome.counts(outcomes))
-  match render_report(run_id, rows, exit_code, options.style, redactor) {
+  match render_report(run_id, rows, exit_code, options.style, secured) {
     Ok(value) => value,
     Err(failure) => execution(2, "", failure.message + "\n"),
   }
 }
 
-proc run_unlock(options: Options, run_id: Str, redactor: redact.Redactor) -> Result[Execution, Error] {
-  let host = options.host ?? ""
-  let rows = [report.row(run_id, host, "lock", "unlock", outcome.Changed, true, "lock released", 0)]
-  render_report(run_id, rows, 0, options.style, redactor)
+proc run_apply(
+  options: Options,
+  computed: Computed,
+  ops: host.HostOps?,
+  allow_remote: Bool,
+  root: Path,
+  run_id: Str,
+  redactor: redact.Redactor,
+) [fs, env, time, process, io, error] -> Execution {
+  let secured = secret.redactor(computed.deployment)
+  if ops != null or ! allow_remote {
+    return run_apply_locked(options, computed, ops, allow_remote, root, run_id, secured)
+  }
+
+  var acquired: List[inventory.Host] = []
+  defer {
+    release_locks(acquired, run_id)
+  }
+  for entry in computed.inventory.hosts {
+    let token = f"{run_id}:{entry.name}"
+    match driver.lock(entry, token) {
+      Ok(_) => { acquired += [entry] },
+      Err(failure) => {
+        let rows = [
+          report.row(run_id, entry.name, "lock", "apply", outcome.Failed, false, failure.message, 0),
+        ]
+        return match render_report(run_id, rows, 1, options.style, secured) {
+          Ok(value) => value,
+          Err(render_failure) => execution(2, "", render_failure.message + "\n"),
+        }
+      },
+    }
+  }
+
+  let locked = match compute(options, ops, allow_remote, root) {
+    Ok(value) => value,
+    Err(failure) => {
+      return execution(2, "", report.clean(failure.message, secured) + "\n")
+    },
+  }
+  run_apply_locked(options, locked, ops, allow_remote, root, run_id, secured)
+}
+
+proc run_unlock(
+  options: Options,
+  allow_remote: Bool,
+  root: Path,
+  run_id: Str,
+  redactor: redact.Redactor,
+) [fs, process, io, error] -> Execution {
+  let requested = options.host ?? ""
+  if ! allow_remote {
+    let rows = [report.row(run_id, requested, "lock", "unlock", outcome.Changed, true, "lock released", 0)]
+    return match render_report(run_id, rows, 0, options.style, redactor) {
+      Ok(value) => value,
+      Err(failure) => execution(2, "", failure.message + "\n"),
+    }
+  }
+  if options.inventory == null {
+    return execution(2, "", "unlock requires --inventory PATH\n")
+  }
+  let inventory_file = options.inventory ?? p""
+  let loaded = match load_inventory(inventory_file) {
+    Ok(value) => value,
+    Err(failure) => {
+      return execution(2, "", report.clean(failure.message, redactor) + "\n")
+    },
+  }
+  var entry: inventory.Host? = null
+  for host in loaded.hosts {
+    if host.name == requested {
+      entry = host
+    }
+  }
+  if entry == null {
+    return execution(2, "", f"host {requested} is not in the inventory\n")
+  }
+  match driver.unlock(entry ?? loaded.hosts[0]) {
+    Ok(_) => {
+      let rows = [report.row(run_id, requested, "lock", "unlock", outcome.Changed, true, "lock removed", 0)]
+      match render_report(run_id, rows, 0, options.style, redactor) {
+        Ok(value) => value,
+        Err(failure) => execution(2, "", failure.message + "\n"),
+      }
+    }
+    Err(failure) => {
+      let rows = [report.row(run_id, requested, "lock", "unlock", outcome.Failed, false, failure.message, 0)]
+      match render_report(run_id, rows, 1, options.style, redactor) {
+        Ok(value) => value,
+        Err(render_failure) => execution(2, "", render_failure.message + "\n"),
+      }
+    },
+  }
 }
 
 proc dispatch(
@@ -1136,10 +1404,7 @@ proc dispatch(
   }
 
   match options.command {
-    Unlock => match run_unlock(options, run_id, redactor) {
-      Ok(value) => value,
-      Err(failure) => execution(2, "", report.clean(failure.message, redactor) + "\n"),
-    },
+    Unlock => run_unlock(options, allow_remote, root, run_id, redactor),
     Doctor => doctor(options, root, run_id, options.style, redactor),
     Plan => {
       let computed = match compute(options, ops, allow_remote, root) {

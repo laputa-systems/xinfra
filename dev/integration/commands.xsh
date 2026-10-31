@@ -173,8 +173,9 @@ export proc check_commands() [fs, process, env, error, io] -> Result[Unit, Str] 
 
     let slow = model.CommandSpec(id: "slow", argv: ["sleep", "5"], timeout: 200ms)
     let timed = apply(session, a.host, slow, true)?
-    require(timed.status == host.Failed or timed.status == host.Partial, "timed command reported success")?
-    print test_case("command timeout")
+    require(timed.status == host.Unknown, "timed command did not report unknown")?
+    require("after submission" in (timed.cause ?? ""), "timeout lost its certainty")?
+    print test_case("command timeout is unknown")
 
     let file_spec = model.FileSpec(id: "notify-file", path: fp"{base}/notify", notify: ["xinfra-r5"])
     let resources = [model.File(file_spec)]

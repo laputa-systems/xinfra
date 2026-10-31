@@ -39,7 +39,7 @@ export proc write(
     }
     validate.Secret(reference) => {
       let data = secret.resolve(reference)?
-      let result = match transport.write_bytes(session, destination, data, 60000) {
+      let result = match transport.write_bytes(session, destination, data, 60000, elevate) {
         Ok(value) => value,
         Err(message) => { return Err(error.failure(message)) },
       }

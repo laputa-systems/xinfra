@@ -92,5 +92,4 @@ and streams channel data with bounded windows.
 - No file-content capture in reports or plans.
 - No background reconciliation or periodic drift loop.
 - The CLI apply path is sequential and does not yet use `--jobs`.
-- CLI `unlock` and saved-plan artifacts do not yet use the library lock and
-  observation records; see [operations](operations.md).
+- Saved-plan pinning records the xinfra version, not the XSH build commit.

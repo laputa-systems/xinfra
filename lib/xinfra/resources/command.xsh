@@ -7,8 +7,8 @@ use xinfra.remote as remote
 use xinfra.secret as secret
 use xinfra.transport as transport
 
-proc execute(session: transport.Session, argv: List[Str], timeout_ms: Int? = null) -> Result[transport.ExecResult, Error] {
-  match transport.exec(session, argv, timeout_ms) {
+proc execute(session: transport.Session, argv: List[Str], timeout_ms: Int? = null, elevate: List[Str] = []) -> Result[transport.ExecResult, Error] {
+  match transport.exec(session, elevate + argv, timeout_ms) {
     Ok(value) => Ok(value),
     Err(message) => Err(error.failure(message)),
   }
@@ -43,25 +43,25 @@ pure duration_ms(value: Duration) -> Int {
   0
 }
 
-proc created(session: transport.Session, spec: model.CommandSpec) -> Result[Bool?, Error] {
+proc created(session: transport.Session, spec: model.CommandSpec, elevate: List[Str] = []) -> Result[Bool?, Error] {
   let creates_path = spec.creates
   if creates_path == null {
     return Ok(null)
   }
-  match remote.inspect_path(session, creates_path ?? p"/") {
+  match remote.inspect_path(session, creates_path ?? p"/", elevate) {
     Ok(host.Found(_)) => Ok(true),
     Ok(host.Missing) => Ok(false),
     _ => Ok(null),
   }
 }
 
-proc unless_satisfied(session: transport.Session, spec: model.CommandSpec, run_guard: Bool) -> Result[Bool?, Error] {
+proc unless_satisfied(session: transport.Session, spec: model.CommandSpec, run_guard: Bool, elevate: List[Str] = []) -> Result[Bool?, Error] {
   let argv = spec.unless_argv
   if argv == null or ! run_guard {
     return Ok(null)
   }
   let timeout = duration_ms(spec.timeout ?? 0ms)
-  let result = execute(session, argv ?? [], if timeout == 0 { null } else { timeout })?
+  let result = execute(session, argv ?? [], if timeout == 0 { null } else { timeout }, elevate)?
   Ok(result.exit_code == 0)
 }
 
@@ -70,9 +70,10 @@ export proc observe(
   session: transport.Session,
   spec: model.CommandSpec,
   run_guards: Bool,
+  elevate: List[Str] = [],
 ) -> Result[plan.Observed, Error] {
-  let creates = created(session, spec)?
-  let guard_result = unless_satisfied(session, spec, run_guards)?
+  let creates = created(session, spec, elevate)?
+  let guard_result = unless_satisfied(session, spec, run_guards, elevate)?
   Ok(plan.Invocation(plan.CommandFacts(creates_present: creates, unless_satisfied: guard_result)))
 }
 
@@ -84,7 +85,7 @@ export proc apply_remote(
   elevate: List[Str] = [],
   run_guards: Bool = true,
 ) -> Result[host.ApplyResult, Error] {
-  let before = observe(session, spec, run_guards)?
+  let before = observe(session, spec, run_guards, elevate)?
   let assessment = plan.assess(model.CommandResource(spec), null, before)
   match assessment.prediction {
     plan.Unchanged => return Ok(result(host_name, spec.id, host.Unchanged, true)),
@@ -128,7 +129,8 @@ export proc apply_remote(
   let output = match ran {
     Ok(value) => value,
     Err(failure) => {
-      return Ok(result(host_name, spec.id, host.Failed, false, failure.message))
+      let status = if transport.after_submission(failure.message) { host.Unknown } else { host.Failed }
+      return Ok(result(host_name, spec.id, status, false, failure.message))
     }
   }
   if output.exit_code != 0 {

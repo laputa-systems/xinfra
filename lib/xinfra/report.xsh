@@ -128,10 +128,23 @@ pure sanitize(text: Str) -> Str {
   CONTROL.replace(text, with: "?")
 }
 
+pure utf8_boundary(value: Str, limit: Int) -> Int {
+  var cut = limit
+  while cut > 0 {
+    let byte = value.byte_at(cut) ?? 0
+    if byte < 128 or byte >= 192 {
+      break
+    }
+    cut -= 1
+  }
+  cut
+}
+
 pure safe(text: Str, redactor: redact.Redactor) -> Str {
   let cleaned = sanitize(redact.redact(text, redactor))
   if cleaned.byte_len() > MAX_FIELD_BYTES {
-    return cleaned.byte_slice(0, MAX_FIELD_BYTES) + "...[truncated]"
+    let cut = utf8_boundary(cleaned, MAX_FIELD_BYTES)
+    return cleaned.byte_slice(0, cut) + "...[truncated]"
   }
   cleaned
 }

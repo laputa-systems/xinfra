@@ -1,6 +1,7 @@
 ##! Secret references resolved only at apply time.
 
 use xinfra.model
+use xinfra.redact
 use xinfra.validate
 
 ## Resolve one secret reference to bytes.
@@ -23,11 +24,33 @@ export proc resolve(reference: model.SecretRef) [fs, env, error] -> Result[Bytes
 ## Digest the exact bytes a prepared source contributes.
 export proc digest(source: validate.PreparedSource) [fs, env, error] -> Result[Str, Error] {
   match source {
-    validate.Local(value) => Ok(hash.sha256(value.path)?.hex()),
-    validate.Content(value) => Ok(hash.sha256(bytes.from_text(value.text)).hex()),
-    validate.Templated(value) => Ok(hash.sha256(bytes.from_text(value.text)).hex()),
+    validate.Local(value) => Ok(value.digest),
+    validate.Content(value) => Ok(value.digest),
+    validate.Templated(value) => Ok(value.digest),
     validate.Secret(reference) => Ok(hash.sha256(resolve(reference)?).hex()),
   }
+}
+
+## Collects every resolvable secret value for output redaction.
+export proc redactor(deployment: validate.Deployment) [fs, env, error] -> redact.Redactor {
+  var result = redact.empty()
+  for source in deployment.sources.values() {
+    match source {
+      validate.Secret(reference) => {
+        match resolve(reference) {
+          Ok(value) => {
+            match value.utf8() {
+              Ok(text) => { result = redact.with_secret(result, text) },
+              Err(_) => {}
+            }
+          }
+          Err(_) => {}
+        }
+      }
+      _ => {}
+    }
+  }
+  result
 }
 
 ## Whether a prepared source resolves a secret at apply time.

@@ -131,7 +131,10 @@ export proc check_packages() [fs, process, env, error, io] -> Result[Unit, Str] 
     let constrained = model.PackageSpec(id: "tree", name: "tree", constraint: ">=2.0")
     let constrained_result = apply(session, a.host, constrained, elevate)?
     require(constrained_result.result.status == host.Unchanged, "satisfied constraint was not unchanged")?
-    print test_case("exact and constrained versions")
+    let prefix = model.PackageSpec(id: "tree", name: "tree", constraint: "~2.2")
+    let prefix_result = apply(session, a.host, prefix, elevate)?
+    require(prefix_result.result.status == host.Unchanged, "satisfied prefix constraint was not unchanged")?
+    print test_case("exact, constrained, and prefix versions")
 
     let absent = model.PackageSpec(id: "tree", name: "tree", state: model.Absent)
     let removed = apply(session, a.host, absent, elevate)?

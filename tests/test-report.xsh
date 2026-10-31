@@ -71,6 +71,25 @@ test test_control_sequences_are_sanitized { |ctx|
   test.ok("\x1b" not in structured)?
 }
 
+test test_overlong_utf8_cause_truncates_on_a_boundary { |ctx|
+  let pieces: List[Str] = collect {
+    for index in range(3000) {
+      let _ = index
+      yield "€"
+    }
+  }
+  let cause = pieces.join("")
+  let built = report.build(
+    "run-1",
+    [report.row("run-1", "web-1", "motd", "apply", outcome.Failed, false, cause, 3)],
+    1,
+  )
+  let human = report.render(built, report.Human, redact.empty())?
+  let structured = report.render(built, report.Json, redact.empty())?
+  test.ok("truncated" in human)?
+  test.ok("truncated" in structured)?
+}
+
 test test_exact_secrets_are_redacted_everywhere { |ctx|
   let redactor = redact.with_secret(redact.empty(), "canary-value")
   let built = report.build(
