@@ -17,10 +17,11 @@ XSHT ?= $(XSH_ROOT)/target/$(TRIPLE)/release/xsht
 LIMA_HOME ?= $(CURDIR)/.work/fixtures/lima
 PYINFRA_VENV ?= $(CURDIR)/.work/oracle/venv
 PYINFRA ?= $(PYINFRA_VENV)/bin/pyinfra
+PREFIX ?= /usr/local
 
 export LIMA_HOME
 
-.PHONY: check test fixtures verify down oracle differential integration
+.PHONY: check test fixtures verify down oracle differential integration package install
 
 check:
 	$(XSHT) check
@@ -45,3 +46,15 @@ differential: oracle
 
 integration:
 	$(XSH) dev/fixtures.xsh exec --cwd $(CURDIR) -- $(XSH) dev/integration.xsh --case all
+
+package:
+	$(XSH) dev/package.xsh
+
+install: package
+	@set -e; \
+	rm -rf .work/tmp/install-src; \
+	mkdir -p .work/tmp/install-src; \
+	tarball=$$(ls -t .work/dist/xinfra-*.tar.gz | head -1); \
+	tar -xzf "$$tarball" -C .work/tmp/install-src; \
+	src=$$(ls -d .work/tmp/install-src/xinfra-*/ | head -1); \
+	sh "$$src/install.sh" "$(PREFIX)"
