@@ -135,8 +135,7 @@ proc name_for(session: transport.Session, database: Str, id: Str) -> Result[Str?
 
 ## Check that a remote parent directory is trusted.
 export proc parent_secure(session: transport.Session, host_path: Path, expected_owner: Str?) -> Result[Bool, Error] {
-  let parent = host_path.parent()
-  let inspection = inspect_path(session, parent)?
+  let inspection = inspect_path(session, host_path)?
   match inspection {
     host.Missing => Ok(false),
     host.Found(stat) => {

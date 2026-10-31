@@ -4,7 +4,7 @@
 
 - **Goal:** a small, inspectable configuration-management tool for Alpine/Laputa-style hosts, written in XSH, with typed resources, `doctor`/`plan`/`apply`/`check`, safe file staging, per-host failure data, and a native SSH transport.
 - **Accepted:** G0 at `4f78312`; C1 at `459312f`; C2 at `2b2a52e`; C3 at `da8e175`; C4 at `a5d5a68`; W1–W6 in `../xsh` through `c4c4da20d`. W6 records the macOS lane, the unexecuted Linux/Docker lanes, and the passing size gate in `../xsh/docs/ssh.md`. R1 passes `dev/integration.xsh --case transport` on both fixtures.
-- **Next:** R3b (remote files, staging, validation, and large transfers); R3a passes `dev/integration.xsh --case dirs,symlinks`.
+- **Next:** R4a (Alpine packages); R3b passes `dev/integration.xsh --case files` including 128 MiB streaming and validation preservation.
 - **Worktree rule:** `../xsh` is clean at `a7772ce05`; W and R both work there directly when needed. The `xinfra-ssh` worktree was not needed. Never include another writer's uncommitted changes.
 - **Hard gate:** every R item waits for W6. If W2 cannot pass within three attempts, park W and the R items; do not substitute an external SSH client.
 - **Resume prompt:** `Run G0 in /Users/josh/d/xinfra from plan.md. Then start W1 in the xinfra-ssh worktree at ef924bf63 if ../xsh is dirty, or in ../xsh if it is clean; run C1-C4 in parallel only if staffed.`

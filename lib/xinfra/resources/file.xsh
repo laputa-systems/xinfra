@@ -3,6 +3,9 @@
 use xinfra.host
 use xinfra.model
 use xinfra.plan
+use xinfra.remote as remote
+use xinfra.staging as staging
+use xinfra.transport as transport
 use xinfra.validate
 
 proc load_source(ops: host.HostOps, source: validate.PreparedSource) [fs, env, error] -> Result[Bytes, Error] {
@@ -270,4 +273,197 @@ export proc apply(
     host.Missing => {}
   }
   apply_content(ops, spec, source, inspection, data)
+}
+
+pure remote_result(
+  host_name: Str,
+  id: Str,
+  status: host.ApplyStatus,
+  verified: Bool,
+  cause: Str? = null,
+) -> host.ApplyResult {
+  host.ApplyResult(id: id, host: host_name, status: status, verified: verified, cause: cause)
+}
+
+proc remote_verify_after(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.FileSpec,
+  source: validate.PreparedSource,
+  digest: Str,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  let verification_source = if validate.digest(source) == null {
+    validate.Local(validate.LocalSource(path: spec.path, digest: digest))
+  } else {
+    source
+  }
+  match remote.inspect_path(session, spec.path) {
+    Err(failure) => remote_result(host_name, spec.id, host.Unknown, false, f"inspect after apply failed: {failure.message}"),
+    Ok(inspection) => {
+      let verification = plan.verify(model.File(spec), verification_source, host.observed(inspection))
+      if verification.ok {
+        remote_result(host_name, spec.id, host.Changed, true)
+      } else {
+        remote_result(host_name, spec.id, host.Partial, false, verification.cause)
+      }
+    },
+  }
+}
+
+proc remote_finish_failure(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.FileSpec,
+  before: host.Inspection,
+  status: host.ApplyStatus,
+  failure: Error,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  match remote.inspect_path(session, spec.path) {
+    Err(_) => remote_result(host_name, spec.id, host.Unknown, false, failure.message),
+    Ok(after) => {
+      if before == after {
+        remote_result(host_name, spec.id, status, false, failure.message)
+      } else {
+        remote_result(host_name, spec.id, host.Partial, false, failure.message)
+      }
+    },
+  }
+}
+
+proc remote_verify_removed(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.FileSpec,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  match remote.inspect_path(session, spec.path) {
+    Err(failure) => remote_result(host_name, spec.id, host.Unknown, false, f"inspect after apply failed: {failure.message}"),
+    Ok(inspection) => {
+      let verification = plan.verify(model.File(spec), null, host.observed(inspection))
+      if verification.ok {
+        remote_result(host_name, spec.id, host.Changed, true)
+      } else {
+        remote_result(host_name, spec.id, host.Partial, false, verification.cause)
+      }
+    },
+  }
+}
+
+proc remote_apply_content(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.FileSpec,
+  source: validate.PreparedSource,
+  before: host.Inspection,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  let expected = validate.digest(source) ?? ""
+  if expected == "" {
+    return remote_result(host_name, spec.id, host.Failed, false, "secret file sources are R7")
+  }
+
+  let staged = match remote.reserve_staging(session, spec.path) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staging failed: {failure.message}") },
+  }
+  defer {
+    let _ = remote.remove_path(session, staged)
+  }
+
+  match staging.write(session, staged, source) {
+    Err(failure) => { return remote_result(host_name, spec.id, host.Partial, false, f"transfer failed: {failure.message}") },
+    Ok(_) => {}
+  }
+
+  match remote.digest_path(session, staged) {
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staged digest failed: {failure.message}") },
+    Ok(actual) => {
+      if actual != expected {
+        return remote_result(host_name, spec.id, host.Failed, false, "staged bytes do not match the intended digest")
+      }
+    },
+  }
+
+  match remote.set_metadata(session, staged, spec.mode, spec.owner, spec.group) {
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staged metadata failed: {failure.message}") },
+    Ok(_) => {}
+  }
+
+  if spec.validate != null {
+    let validation = spec.validate ?? model.Validation(argv: [])
+    match staging.validate(session, validation.argv, staged) {
+      Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"validation failed: {failure.message}") },
+      Ok(_) => {}
+    }
+  }
+
+  match remote.inspect_path(session, staged) {
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"staged inspect failed: {failure.message}") },
+    Ok(host.Found(stat)) => {
+      if stat.kind != "file" {
+        return remote_result(host_name, spec.id, host.Failed, false, "staged object is not a regular file")
+      }
+    }
+    Ok(host.Missing) => { return remote_result(host_name, spec.id, host.Failed, false, "staged object disappeared") },
+  }
+
+  match remote.promote(session, staged, spec.path) {
+    Err(failure) => { return remote_finish_failure(session, host_name, spec, before, host.Failed, failure) },
+    Ok(_) => {}
+  }
+
+  remote_verify_after(session, host_name, spec, source, expected)
+}
+
+## Applies one file resource over a remote session.
+export proc apply_remote(
+  session: transport.Session,
+  host_name: Str,
+  spec: model.FileSpec,
+  source: validate.PreparedSource?,
+) [fs, env, process, error, io] -> host.ApplyResult {
+  let inspection = match remote.inspect_path(session, spec.path) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"inspect failed: {failure.message}") },
+  }
+  let assessment = plan.assess(model.File(spec), source, host.observed(inspection))
+  match assessment.prediction {
+    plan.Unchanged => { return remote_result(host_name, spec.id, host.Unchanged, true) },
+    plan.Blocked => { return remote_result(host_name, spec.id, host.Blocked, false, assessment.cause) },
+    plan.Changed => {}
+    plan.Undetermined => {
+      if source == null {
+        return remote_result(host_name, spec.id, host.Failed, false, "a present file needs a prepared source")
+      }
+    }
+  }
+
+  if spec.state == model.Absent {
+    let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner) {
+      Ok(value) => value,
+      Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"parent check failed: {failure.message}") },
+    }
+    if ! secure {
+      return remote_result(host_name, spec.id, host.Blocked, false, f"parent of {spec.path.display()} is not a trusted directory")
+    }
+    let attempted = try {
+      remote.remove_path(session, spec.path)?
+    }
+    return match attempted {
+      Ok(_) => remote_verify_removed(session, host_name, spec),
+      Err(failure) => remote_finish_failure(session, host_name, spec, inspection, host.Failed, failure),
+    }
+  }
+
+  if source == null {
+    return remote_result(host_name, spec.id, host.Failed, false, "a present file needs a prepared source")
+  }
+
+  let secure = match remote.parent_secure(session, spec.path.parent(), spec.owner) {
+    Ok(value) => value,
+    Err(failure) => { return remote_result(host_name, spec.id, host.Failed, false, f"parent check failed: {failure.message}") },
+  }
+  if ! secure {
+    return remote_result(host_name, spec.id, host.Blocked, false, f"parent of {spec.path.display()} is not a trusted directory")
+  }
+
+  remote_apply_content(session, host_name, spec, source, inspection)
 }

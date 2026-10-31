@@ -2,6 +2,7 @@
 
 use integration.dirs as dirs_case
 use integration.facts as facts_case
+use integration.files as files_case
 use integration.transport as transport_case
 
 cli main(case: Str = "all") [fs, process, env, error, io] {
@@ -26,7 +27,14 @@ cli main(case: Str = "all") [fs, process, env, error, io] {
     }
   }
 
-  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "all" {
+  if case == "files" or case == "all" {
+    match files_case.check_files() {
+      Ok(_) => {}
+      Err(message) => fail message
+    }
+  }
+
+  if case != "transport" and case != "facts" and case != "dirs,symlinks" and case != "dirs" and case != "symlinks" and case != "files" and case != "all" {
     fail f"unknown integration case {case}"
   }
 }

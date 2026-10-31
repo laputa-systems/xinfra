@@ -112,6 +112,44 @@ export proc run_script(
   }
 }
 
+## Stream a local file to one remote path.
+export proc upload_file(
+  session: Session,
+  destination: Path,
+  source: Path,
+  timeout_ms: Int? = null,
+) -> Result[ExecResult, Str] {
+  let command = shell_command(f"cat > {shlex.quote(destination.display())}")
+  let result = if timeout_ms == null {
+    ssh.exec(session, command, {stdin_path: source})
+  } else {
+    ssh.exec(session, command, {stdin_path: source, timeout_ms: timeout_ms ?? 0})
+  }
+  match result {
+    Ok(value) => Ok(value),
+    Err(error) => Err(error.message),
+  }
+}
+
+## Write bytes to one remote path.
+export proc write_bytes(
+  session: Session,
+  destination: Path,
+  data: Bytes,
+  timeout_ms: Int? = null,
+) -> Result[ExecResult, Str] {
+  let command = shell_command(f"cat > {shlex.quote(destination.display())}")
+  let result = if timeout_ms == null {
+    ssh.exec(session, command, {stdin: data})
+  } else {
+    ssh.exec(session, command, {stdin: data, timeout_ms: timeout_ms ?? 0})
+  }
+  match result {
+    Ok(value) => Ok(value),
+    Err(error) => Err(error.message),
+  }
+}
+
 ## Close a transport session.
 export proc close(session: Session) -> Result[Unit, Str] {
   match ssh.close(session) {
