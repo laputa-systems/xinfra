@@ -88,6 +88,7 @@ export type PlanArtifact = {
   deployment_digest: Str,
   inventory_digest: Str,
   version: Str,
+  xsh_pin: Str,
   sources: List[PlanSource],
   observations: List[PlanObservation],
   actions: List[PlanAction],
@@ -871,7 +872,7 @@ proc save_plan(
   deployment: validate.Deployment,
   facts: plan.Facts,
   actions: List[plan.Action],
-) [fs, error] -> Result[Unit, model.Problem] {
+) [fs, env, error] -> Result[Unit, model.Problem] {
   for action in actions {
     if action.prediction == plan.Undetermined {
       return Err(problem("plan", "a plan with unknown actions cannot be saved", field: "save-plan"))
@@ -880,6 +881,10 @@ proc save_plan(
 
   let deployment_digest = digest_file(deployment_file)?
   let inventory_digest = digest_file(inventory_file)?
+  let xsh_pin = match env.get_or("XSH_PIN", "") {
+    Ok(value) => value.trim(),
+    Err(_) => "",
+  }
   let artifact = PlanArtifact(
     schema_version: 1,
     kind: "plan",
@@ -889,6 +894,7 @@ proc save_plan(
     deployment_digest: deployment_digest,
     inventory_digest: inventory_digest,
     version: version.VERSION,
+    xsh_pin: xsh_pin,
     sources: plan_sources(deployment),
     observations: plan_observations(facts),
     actions: plan_actions(actions),
@@ -924,6 +930,7 @@ proc check_plan(
   deployment: validate.Deployment,
   facts: plan.Facts,
   actions: List[plan.Action],
+  xsh_pin: Str,
 ) [fs, error] -> Result[Unit, model.Problem] {
   let deployment_digest = digest_file(deployment_file)?
   let inventory_digest = digest_file(inventory_file)?
@@ -937,6 +944,10 @@ proc check_plan(
 
   if artifact.version != version.VERSION {
     return Err(problem("stale-plan", "xinfra version changed since the plan was saved", field: "plan"))
+  }
+
+  if artifact.xsh_pin != xsh_pin {
+    return Err(problem("stale-plan", "XSH pin changed since the plan was saved", field: "plan"))
   }
 
   if artifact.sources != plan_sources(deployment) {
@@ -1024,7 +1035,7 @@ proc run_plan(
   root: Path,
   run_id: Str,
   redactor: redact.Redactor,
-) [fs, error] -> Execution {
+) [fs, env, error] -> Execution {
   if options.save_plan != null {
     let target = options.save_plan ?? p""
     match save_plan(target, run_id, computed.deployment_file, computed.inventory_file, computed.deployment, computed.facts, computed.actions) {
@@ -1415,7 +1426,19 @@ proc run_apply_locked(
         return execution(2, "", report.clean(failure.message, secured) + "\n")
       },
     }
-    match check_plan(artifact, computed.deployment_file, computed.inventory_file, computed.deployment, computed.facts, computed.actions) {
+    let xsh_pin = match env.get_or("XSH_PIN", "") {
+      Ok(value) => value.trim(),
+      Err(_) => "",
+    }
+    match check_plan(
+      artifact,
+      computed.deployment_file,
+      computed.inventory_file,
+      computed.deployment,
+      computed.facts,
+      computed.actions,
+      xsh_pin,
+    ) {
       Ok(_) => {}
       Err(failure) => {
         return execution(2, "", report.clean(failure.message, secured) + "\n")

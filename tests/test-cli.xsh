@@ -40,6 +40,8 @@ type JsonReport = {
 
 type JsonKind = {schema_version: Int, kind: Str}
 
+type JsonPlan = {schema_version: Int, kind: Str, xsh_pin: Str}
+
 proc parse_ok(argv: List[Str]) -> Result[command_line.Options, Error] {
   match command_line.parse(argv) {
     Ok(value) => Ok(value),
@@ -544,7 +546,7 @@ test test_saved_plan_round_trip_and_stale_rejection { |ctx|
   )?
   let fake_root = test.temp_dir(ctx, "cli-save-root")?
   let plan_file = fp"{fake_root}/saved-plan.json"
-  env XINFRA_FAKE_ROOT=f"{fake_root}" {
+  env XINFRA_FAKE_ROOT=f"{fake_root}" XSH_PIN="pin-a" {
     fake.reset()?
     let ops = fake.host()
     let saved = invoke(
@@ -565,8 +567,9 @@ test test_saved_plan_round_trip_and_stale_rejection { |ctx|
     )
     test.eq(saved.exit, 0, "save: " + saved.stderr)?
     test.ok(plan_file.is_file()?)?
-    let artifact = json.decode(plan_file.read_text()?)?.require(JsonKind)?
+    let artifact = json.decode(plan_file.read_text()?)?.require(JsonPlan)?
     test.eq(artifact.kind, "plan")?
+    test.eq(artifact.xsh_pin, "pin-a")?
     test.ok("canary" not in plan_file.read_text()?)?
 
     let applied = invoke(
@@ -585,6 +588,25 @@ test test_saved_plan_round_trip_and_stale_rejection { |ctx|
     )
     test.eq(applied.exit, 0, "plan-apply: " + applied.stderr)?
     test.eq((decoded_report(applied)?).summary.changed, 1)?
+
+    env XSH_PIN="pin-b" {
+      let pinned = invoke(
+        [
+          "apply",
+          "--inventory",
+          inventory_file.display(),
+          "--plan",
+          plan_file.display(),
+          "--format",
+          "json",
+        ],
+        ops,
+        fixture.root,
+        "run-pin",
+      )
+      test.eq(pinned.exit, 2, "pin: " + pinned.stderr)?
+      test.ok("XSH pin changed" in pinned.stderr)?
+    }
 
     fixture.file.write(
       """##! Test deployment.

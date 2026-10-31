@@ -82,12 +82,6 @@ exchange code with Graviola as the only cryptographic provider. It negotiates
 strict key exchange, pins a `SHA256:` host key, authenticates an Ed25519 key,
 and streams channel data with bounded windows.
 
-## Known gaps
-
-- Saved plans record the xinfra version, not the XSH build commit.
-
-The backlog is in [TODO](../TODO.md).
-
 ## Deliberate omissions
 
 - No Python, pyinfra, agent, or daemon on the managed guest.

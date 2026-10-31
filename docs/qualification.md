@@ -99,8 +99,8 @@ SSH reverse tunnel from the controller.
 
 Measured at the O1 tree on a constrained host. Values are indicative and the
 time gate was deferred, not passed. **Superseded:** the XIN-1 session-reuse
-change is measured in [performance](performance.md); the sequential-apply
-and notification-row limits below no longer apply.
+change is measured in [performance](performance.md); the sequential-apply,
+notification-row, and saved-plan pin limits below no longer apply.
 
 | Metric | xinfra | pyinfra 3.10.0 |
 |---|---:|---:|
@@ -144,7 +144,7 @@ and notification-row limits below no longer apply.
   deliberate omissions and fail rather than guessing.
 - **CLI concurrency (O1):** apply was sequential; `--jobs` was validated but
   unused.
-- **Saved-plan pin:** records the xinfra version, not the XSH commit.
+- **Saved-plan pin (O1):** recorded the xinfra version, not the XSH commit.
 - **Notifications (O1):** a restart/reload appended a second report row with
   the service resource ID.
 - **Remaining work:** P3 and P4 tickets are in [TODO](../TODO.md). No P1 or P2

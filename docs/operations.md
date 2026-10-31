@@ -53,15 +53,16 @@ because the first mutation may have reached the host.
 ## Saved plans
 
 `plan --save-plan PATH` writes schema-version-1 JSON containing the deployment
-path and digest, inventory path and digest, xinfra version, each prepared
-source digest, each observed precondition, and the ordered action IDs, hosts,
-and operations. Secrets and secret values are absent.
+path and digest, inventory path and digest, xinfra version, `XSH_PIN` value,
+each prepared source digest, each observed precondition, and the ordered action
+IDs, hosts, and operations. Secrets and secret values are absent.
 
-`apply --plan PATH` recomputes the deployment, inventory, facts, and actions,
-then rejects a changed deployment, inventory, source, observation, version, or
-action with exit `2` before mutation. A plan with an `unknown` action cannot be
-saved. Replan by running `plan --save-plan` again; an approval never widens
-silently.
+Set `XSH_PIN` to the XSH commit or another build identifier before saving.
+`apply --plan` must run with the same value; an empty pin matches only an empty
+pin. The command also rejects a changed deployment, inventory, source,
+observation, version, or action with exit `2` before mutation. A plan with an
+`unknown` action cannot be saved. Replan by running `plan --save-plan` again;
+an approval never widens silently.
 
 ## Locks
 
