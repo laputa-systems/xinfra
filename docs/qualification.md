@@ -9,8 +9,8 @@
 | XSH release SHA-256 | `991e76183b95873f20f9af964dd7df1b193c747d6c894446906d9df96dc48592` |
 | xsht release SHA-256 | `b48f1e3b024e6977bf99662bff11b0f19df29dc265b48c0ed8db909ce8a67d42` |
 | pyinfra oracle | 3.10.0, MIT, Python 3.13, unshipped |
-| Qualified controller | macOS arm64 |
-| Qualified guest | Alpine 3.23.4, OpenSSH 10.x, BusyBox 1.37 |
+| Qualified controller | macOS arm64; Ubuntu 24.04 x86_64 |
+| Qualified guest | Alpine 3.23.4 (aarch64), OpenSSH 10.x, BusyBox 1.37 |
 
 ## Commit ledger
 
@@ -24,6 +24,8 @@
 | W5 typed adapter | `de0ed2606` in `../xsh` |
 | W6 qualification | `c4c4da20d` in `../xsh` |
 | Worker session fix | `4c41d762e` in `../xsh` |
+| Docker gate test fix | `58a070c84` in `../xsh` |
+| Linux qualification record | `757f0d00d` in `../xsh` |
 | C1 inventory | `459312f` |
 | C2 model and planner | `2b2a52e` |
 | C3 local resources | `da8e175` |
@@ -47,7 +49,9 @@
 | Z1 hardening | `457e875` |
 
 The final acceptance below ran against `457e875` plus the documentation,
-`TODO.md`, and status changes in the Z1 commit.
+`TODO.md`, and status changes in the Z1 commit. The Linux x86_64 qualification
+and Docker re-run were added on 2026-10-31 at the tree containing this document
+change.
 
 ## Acceptance
 
@@ -73,6 +77,23 @@ Additional manual checks in the Z1 pass:
 - A production secret validator that printed its staged file produced `[redacted]` in JSON, not the canary.
 - A command timeout after submission reported `unknown`, not `failed`.
 - A root-owned path was planned, checked, and applied through the CLI with `privilege: root`.
+
+## Linux x86_64 qualification
+
+The xinfra controller ran on Ubuntu 24.04.4 LTS (x86_64) with the pinned
+`4c41d762e` release pair built for `x86_64-unknown-linux-musl`. The fixtures
+were the same Alpine 3.23.4 guests used by the macOS lane, reached through an
+SSH reverse tunnel from the controller.
+
+| Command | Result |
+|---|---|
+| `make check` | 67 files checked, no diagnostics. |
+| `make test` | 102 passed, 0 failed, 0 skipped. |
+| `dev/integration.xsh --case all` | Every scenario green; exit 0. |
+| `cargo test --release --target x86_64-unknown-linux-musl -p xsh-ssh` | 19 passed: 5 connect, 10 exec, 4 stream. |
+| `xsht test tests/xsh/ssh-` | 8 passed, 0 failed, 0 skipped. |
+| `scripts/check-ssh-crypto.sh` in Linux Docker | `ssh crypto graph ok: vendored graviola 0.4.1 is the only provider`. |
+| `cargo dev gate crates/xsh-ssh` | Executes; `check-compile` and `test-core-unit` pass. The full closure remains red on pre-existing xsh core tests outside `xsh-ssh`. |
 
 ## Measured costs
 
@@ -102,11 +123,21 @@ time gate was deferred, not passed. Full method is in
 ## Coverage and limits
 
 - **macOS arm64 controller:** qualified.
-- **Linux x86_64 controller:** unqualified. `ubuntu@oracle` was unreachable at
-  preflight, and OrbStack Docker hangs on `docker run --rm alpine:3.23 true`.
-  The Linux lane and `cargo dev gate crates/xsh-ssh` were not executed.
-- **Docker crypto gate:** unexecuted for the same Docker reason. The macOS
-  crypto graph check passed: vendored Graviola is the only provider.
+- **Linux x86_64 controller:** qualified on Ubuntu 24.04.4 LTS. `make check`,
+  `make test`, and the full integration suite pass with the pinned
+  `x86_64-unknown-linux-musl` release pair. The controller ran against the
+  macOS-hosted aarch64 Alpine fixtures; x86_64 guest coverage is not claimed.
+- **XSH Linux x86_64 lane:** qualified. The `xsh-ssh` crate suite and the native
+  `tests/xsh/ssh-` tests pass on the Linux controller.
+- **Docker crypto gate:** the crypto graph check passes inside a Linux Docker
+  container: vendored Graviola 0.4.1 is the only provider. The broader
+  `cargo dev gate crates/xsh-ssh` now executes; its `check-compile` and
+  `test-core-unit` cases pass, but the full closure is red on pre-existing xsh
+  tests outside the SSH crypto path (`test-core-integration`,
+  `test-ambient-fs-policy`, and `test-core-compat-boundaries`). Those failures
+  are not crypto or environment failures and remain open in `../xsh`. A
+  test-only libc 0.2.186 fix at `58a070c84` was needed for the gate to compile;
+  `crates/xsh-ssh` is unchanged from the pin.
 - **Guest variants:** only Alpine 3.23/OpenSSH 10.x is qualified. Dropbear,
   BSD SSH, older OpenSSH, systemd, and non-Alpine package managers are
   deliberate omissions and fail rather than guessing.

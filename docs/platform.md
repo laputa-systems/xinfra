@@ -29,11 +29,15 @@ fixtures.
 | Controller | Status | Notes |
 |---|---|---|
 | macOS arm64 | Qualified | Full `make check`, `make test`, `make integration`, and `make differential`. |
-| Linux x86_64 | Not qualified | No reachable Linux controller during this campaign. The source is platform-neutral XSH. |
-| Linux arm64 | Not qualified | Same limitation. |
+| Linux x86_64 | Qualified | Ubuntu 24.04; full `make check`, `make test`, and integration suite with the pinned `x86_64-unknown-linux-musl` release pair. |
+| Linux arm64 | Not qualified | No arm64 controller was available. |
 
 The controller needs an XSH release that includes the `ssh` module. The shipped
 wrapper runs `${XSH:-xsh}` and does not embed a controller binary.
+
+The Linux controller ran the integration suite against the same macOS-hosted
+aarch64 Alpine fixtures. The guest baseline stays Alpine 3.23.4; controller
+architecture is independent of guest architecture.
 
 ## Capability matrix
 

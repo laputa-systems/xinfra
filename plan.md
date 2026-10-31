@@ -3,9 +3,9 @@
 ## Status
 
 - **Goal:** a small, inspectable configuration-management tool for Alpine/Laputa-style hosts, written in XSH, with typed resources, `doctor`/`plan`/`apply`/`check`, safe file staging, per-host failure data, and a native SSH transport.
-- **Accepted:** G0 at `4f78312`; C1–C4 at `459312f`, `2b2a52e`, `da8e175`, `a5d5a68`; W1–W6 in `../xsh` through `c4c4da20d`; R1–R8 at `c6b8fc0`, `f5d6f0e`, `45b06e5`, `1292d4e`, `c8e7373`, `d7ba30a`, `09c97d3`, `e79e906`, `9c6bfd8`, `0c16be7`; Q1 at `d8401e7`; Q2 at `3f0f250`; Q3 at `4ad0160`; Z1 at this commit. `make check`, `make test` (102 tests), `make integration`, `make differential`, and `make package` pass; `make install` yields a working installed `xinfra --help` and `--version`; and `make perf` records the measured costs with a constrained-host deferral. `docs/qualification.md` records the commit ledger, exact commands and results, platform coverage, measured costs, and remaining limitations. P3/P4 findings are in `TODO.md`; no P1 or P2 finding remains open. W6 records the macOS lane, the unexecuted Linux/Docker lanes, and the passing size gate in `../xsh/docs/ssh.md`.
-- **Next:** none; the campaign is complete. Linux x86_64 and the Docker crypto gate remain unqualified as recorded.
-- **Worktree rule:** `../xsh` is clean at `4c41d762e`; W and R both work there directly when needed. The `xinfra-ssh` worktree was not needed. Never include another writer's uncommitted changes.
+- **Accepted:** G0 at `4f78312`; C1–C4 at `459312f`, `2b2a52e`, `da8e175`, `a5d5a68`; W1–W6 in `../xsh` through `c4c4da20d`; R1–R8 at `c6b8fc0`, `f5d6f0e`, `45b06e5`, `1292d4e`, `c8e7373`, `d7ba30a`, `09c97d3`, `e79e906`, `9c6bfd8`, `0c16be7`; Q1 at `d8401e7`; Q2 at `3f0f250`; Q3 at `4ad0160`; Z1 at `457e875`; post-Z1 qualification at this commit. `make check`, `make test` (102 tests), `make integration`, `make differential`, and `make package` pass; `make install` yields a working installed `xinfra --help` and `--version`; and `make perf` records the measured costs with a constrained-host deferral. `docs/qualification.md` records the commit ledger, exact commands and results, platform coverage, measured costs, and remaining limitations. P3/P4 findings are in `TODO.md`; no P1 or P2 finding remains open. W6 records the macOS lane, the Linux x86_64 lanes, the passing size gate, and the Docker crypto graph result in `../xsh/docs/ssh.md`.
+- **Next:** none; the campaign is complete. Linux x86_64 is qualified. The Docker crypto graph check passes; the broader `cargo dev gate` runs but remains red on pre-existing xsh tests outside the SSH crypto path.
+- **Worktree rule:** `../xsh` is clean; the xinfra product pin remains `4c41d762e`. Later commits are a test-only libc 0.2.186 compile fix and the SSH qualification record. W and R both work there directly when needed. The `xinfra-ssh` worktree was not needed. Never include another writer's uncommitted changes.
 - **Hard gate:** satisfied at W6; no remaining R work depends on an external SSH client.
 - **First command:** `make check`.
 
@@ -36,7 +36,7 @@
 
 ### Prescribed
 
-- **D3 — Fixtures are local Lima Alpine guests.** Use `LIMA_HOME=$PWD/.work/fixtures/lima`, Alpine 3.23.4, a pinned image digest, no host home mount, and users/keys created by the fixture script. Docker/OrbStack is broken here and `ubuntu@oracle` was unreachable at preflight; neither is a dependency. Reverse if the owner supplies a working Linux host and wants a second controller lane; that lane then goes on **Needs environment**, not the critical path.
+- **D3 — Fixtures are local Lima Alpine guests.** Use `LIMA_HOME=$PWD/.work/fixtures/lima`, Alpine 3.23.4, a pinned image digest, no host home mount, and users/keys created by the fixture script. Docker/OrbStack was broken and `ubuntu@oracle` was unreachable at preflight; both were repaired on 2026-10-31 and the Linux and Docker lanes ran. Neither is a product dependency, and the fixture lane stays on Lima.
 - **D4 — pyinfra 3.10.0 is an oracle only.** Install it in `.work/oracle/venv` with `uv` and Python 3.13, run it with an isolated `HOME`, never ship it, never install it on a product fixture. Preserve its MIT license and record the version. Reverse only for a newer 3.x with the same overlapping operations, which requires re-pinning and re-running Q1.
 - **D5 — One transport boundary.** All remote I/O goes through one xinfra adapter over XSH's `ssh` module. Every remote command is `/bin/sh -c <script>`; the script begins with `LC_ALL=C` and `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, and each argv item is rendered with `shlex.quote`/`shlex.join`. The adapter is the only place request values become shell source. Reject NUL, non-UTF-8 managed paths, and malformed host keys before connecting. A POSIX login shell is probed; a shell that cannot run the probe is a host error, not a fallback. Host trust is a mandatory `SHA256:` fingerprint; there is no TOFU, `known_hosts` read/write, password, agent, PTY, forwarding, or SFTP path in v1.
 - **D6 — Resource contract.** Resources are an ordered `List[Resource]` with stable explicit IDs and optional `requires` IDs. The closed set is:
@@ -75,7 +75,7 @@
 - **Verified on a disposable Alpine 3.23.4 Lima guest:** OpenRC start/stop/status (`stopped` exits 3), `apk version -t`, `stat -c`, `mv -T`, passwordless `sudo`, OpenSSH, and a real pyinfra 3.10.0 file operation. The probe guest was deleted; fixture state must live under `.work/fixtures/lima`.
 - **Verified XSH behavior:** typed `module.load(...).require(ModuleContract)` for deployment programs, TOML `[[hosts]]` records, `par-map` returning per-host `Result` data with `try`, and `shlex.quote` on empty values, quotes, newlines, leading hyphens, and substitution text. NUL is not shell-representable and is rejected by the transport.
 - **pyinfra:** 3.10.0 works from `.work/tmp/venv` against the Lima guest with `HOME` isolated; it writes `known_hosts` under that HOME. Q1 must always isolate `HOME`; never touch `~/.ssh`.
-- **Known red:** OrbStack Docker fails with `rw layer snapshot not found` and container runs hang; do not use it. `Tailscale ping` for `oracle` timed out and plain SSH timed out; the Linux controller lane is unverified.
+- **Resolved 2026-10-31:** OrbStack container removal was blocked by a 6.7M-level `depth-probe` directory in two Docker snapshots; moving the orphaned trees out of the snapshots restored `docker run` and `rm`. `ubuntu@oracle` is reachable; the Linux x86_64 lane and the Docker crypto graph check ran.
 - **Gap:** no native SSH means no W6, no R item, and no remote completion. C items are local-only until W6.
 
 ## Sequence
@@ -106,7 +106,7 @@ Sizes are relative implementation effort, not acceptance time. Every command run
   Acceptance: rebuild the release pair, then `cd "$XSH_ROOT" && target/aarch64-apple-darwin/release/xsht api module:ssh` lists the surface; `dev/fixtures.xsh exec --cwd "$XSH_ROOT" -- target/aarch64-apple-darwin/release/xsht test tests/xsh/ssh-` passes; examples run against the fixture; session scope cleanup, deterministic rejection of concurrent use of one handle, and no key or payload material in Debug/errors.
 
 - **W6 — Qualify and pin** (M, gate). Prereq: W5. Owns `../xsh/docs/`, `dev/pins.env`.
-  Acceptance: full W suite on macOS arm64; the Linux lane if **Needs environment** allows; `"$XSH_ROOT"/scripts/check-ssh-crypto.sh`; `cargo dev gate crates/xsh-ssh` if Docker is available, otherwise record the unexecuted gate; record build time, startup, and the 5% binary-size result from D13; rebuild `xsh` and `xsht` at the accepted commit, write the worktree/branch commit and both SHA-256 digests to `dev/pins.env`, and run `make check` here. The owner merges `xinfra-ssh` into xsh main; if the merge is not available, keep `XSH_ROOT` on the worktree and record the unmerged branch as a limitation. R1 does not start until this passes.
+  Acceptance: full W suite on macOS arm64; the Linux x86_64 lane; `"$XSH_ROOT"/scripts/check-ssh-crypto.sh`; `cargo dev gate crates/xsh-ssh` (executed; the full path closure remains red on pre-existing xsh tests outside the SSH crypto path); record build time, startup, and the 5% binary-size result from D13; rebuild `xsh` and `xsht` at the accepted commit, write the worktree/branch commit and both SHA-256 digests to `dev/pins.env`, and run `make check` here. The owner merges `xinfra-ssh` into xsh main; if the merge is not available, keep `XSH_ROOT` on the worktree and record the unmerged branch as a limitation. R1 does not start until this passes.
 
 ### Phase 2 — xinfra core (local)
 
@@ -232,7 +232,7 @@ Structured output is schema version 1. `--format json` emits one object with a `
 
 ## Needs environment
 
-- **Linux x86_64 controller lane.** `ubuntu@oracle` via Tailscale SSH was unverified at preflight: tailnet ping and port 22 timed out. The owner can run the macOS-identical `make check test integration` with a Linux `xsh`/`xsht` release pair after copying the tree to a disposable directory under the owner's home there and removing it afterward. This does not block macOS local completion; record the unexecuted lane as unqualified.
+- **Linux arm64 controller lane.** Not qualified; no arm64 controller was available. The Linux x86_64 lane is qualified.
 - **OpenSSH variants other than Alpine 3.23/OpenSSH 10.x.** Only the Alpine guest is qualified. Dropbear, BSD, and older OpenSSH are unqualified and must fail clearly rather than select a guessed adapter.
 - **Busy host during perf measurement.** If `perf-gate-ready` reports no headroom, record `perf gate deferred: host busy`; do not claim a pass.
 
@@ -251,7 +251,7 @@ Structured output is schema version 1. `--format json` emits one object with a `
 - Production inventory, real hosts, the operator's `~/.ssh/config`, `known_hosts`, or agent; any change to host trust outside a disposable guest. Never rewrite doas or sudo policy or SSH access to obtain permission.
 - External `ssh`/`scp`/`sftp` in the product; pyinfra or Python on a product guest or in a package; a remote XSH runtime, persistent deployment daemon, remote `jq`, systemd assumption, or hidden package-manager bootstrap.
 - ssh-build's Git-only OxiSH server as a provisioning endpoint, or broadening that server's permissions. Fixtures use an ordinary OpenSSH server.
-- Docker/OrbStack repair or reliance; `/tmp`, `$TMPDIR`, or `/var/folders` for worktrees, fixtures, or scratch.
+- Docker/OrbStack as a product dependency or a substitute for the Lima fixture lane; the Docker crypto gate is qualification-only. `/tmp`, `$TMPDIR`, or `/var/folders` for worktrees, fixtures, or scratch.
 - Pushing, release tags, CI edits, formatters, rewriting xsh history, changing the pinned Rust nightly, or cleaning another writer's `../xsh` changes.
 - Secrets in inventory examples, fixtures, saved plans, test logs, or packages.
 - Fleet-wide transactions, general rollback, exact dry-run predictions for unmodeled commands, or a claim that a plan leaves the host untouched. Deployment programs are trusted operator code; `plan` does not sandbox arbitrary XSH.
@@ -266,7 +266,7 @@ Structured output is schema version 1. `--format json` emits one object with a `
 ### Supersessions and deliberate omissions
 
 - **Full XSH-55 is not delivered here.** Agent authentication, `known_hosts` modes, password/keyboard-interactive, PTY, forwarding, SFTP, and non-Ed25519 algorithms are deferred and fail explicitly. Reason: D1's minimal subset is what xinfra consumes; the full RFC remains open upstream. This supersedes the draft's implication that the whole native contract is available.
-- **Docker-based Linux verification is replaced by Lima/macOS plus a Needs-environment Linux lane.** Reason: the local Docker daemon is broken at preflight; no Docker repair is in scope.
+- **Docker-based Linux verification was replaced by Lima/macOS plus a Linux controller lane.** The lane ran on Ubuntu 24.04 x86_64 on 2026-10-31, and the Docker crypto graph check also ran after the runtime was repaired. Docker is still not a product dependency.
 - **The draft's "property tests" become deterministic generated corpora** for quoting, paths, IDs, and validation. Reason: XSH has no property framework, and the same failure classes are covered by table-driven cases.
 - **Packaging follows D12, not an unstated prerelease convention.** No owner convention was found for a new repository; the source tarball plus install script is the smallest reproducible artifact.
 - **The Laputa service contract is read, not integrated.** No OpenRC changes go into Laputa; the adapter stays in xinfra.
@@ -283,6 +283,7 @@ Structured output is schema version 1. `--format json` emits one object with a `
 | Laputa service contract | `064ad8c6100a087b1b2c67d6910f9b4e814ff67f` (read-only reference) |
 | pyinfra | `3.10.0` (MIT), Python 3.13, isolated venv |
 | Alpine fixture | Alpine 3.23.4 Lima template; image digest recorded by G0 in `dev/fixtures/alpine.yaml` |
+| Linux lane | Ubuntu 24.04 x86_64; `x86_64-unknown-linux-musl` release pair from the XSH pin |
 | Lima | 2.2.1 |
 
 ### Code map
