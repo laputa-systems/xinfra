@@ -3,9 +3,9 @@
 ## Status
 
 - **Goal:** a small, inspectable configuration-management tool for Alpine/Laputa-style hosts, written in XSH, with typed resources, `doctor`/`plan`/`apply`/`check`, safe file staging, per-host failure data, and a native SSH transport.
-- **Accepted:** none. The campaign document is committed; there are no product commits.
-- **Next:** G0 (scaffold and disposable fixtures).
-- **Worktree rule:** W1 runs in a clean checkout at the pin. `../xsh` main is dirty with another writer's uncommitted changes; W uses a detached worktree at `ef924bf63` under `../xsh/.work/wt/xinfra-ssh` and never includes those files. Do not stash, commit, revert, or clean the main tree.
+- **Accepted:** G0 at `4f78312` (scaffold, pins, disposable `xinfra-a`/`xinfra-b` fixtures); W1 at `1158295f1` in `../xsh` (vendored `oxish-proto`, `oxish-graviola`, and patched Graviola).
+- **Next:** W2 (connect and pinned host key) in `../xsh`; C1 (inventory) may run beside it.
+- **Worktree rule:** `../xsh` is clean at `1158295f1`, after the old pin, so W works in `../xsh` directly. The `xinfra-ssh` worktree was not needed. Never include another writer's uncommitted changes.
 - **Hard gate:** every R item waits for W6. If W2 cannot pass within three attempts, park W and the R items; do not substitute an external SSH client.
 - **Resume prompt:** `Run G0 in /Users/josh/d/xinfra from plan.md. Then start W1 in the xinfra-ssh worktree at ef924bf63 if ../xsh is dirty, or in ../xsh if it is clean; run C1-C4 in parallel only if staffed.`
 - **First command:** `make check`.
