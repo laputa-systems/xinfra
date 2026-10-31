@@ -22,7 +22,7 @@ selects `reload` or the default `restart`.
 | `Directory` | `id`, `path` | Mode `0755`. Creates one directory below an existing trusted parent. `absent` removes an empty directory only. |
 | `File` | `id`, `path`, `source` when present | Mode `0644`. Exactly one source variant. Stages beside the destination, verifies digest and type, runs an optional validator, then promotes with `mv -T`. |
 | `Symlink` | `id`, `path`, `target` | Creates a symbolic link. A different target or a non-link is `blocked` unless `replace: true`. There is no mode or owner. |
-| `Package` | `id`, `name` | `apk` package. `constraint` accepts an exact version or `<`, `<=`, `>`, `>=`, or `~`. `refresh_index` runs `apk update` only during apply. |
+| `Package` | `id`, `name` | `apk` package. `constraint` accepts an exact version or `<`, `<=`, `>`, `>=`, or `~`. `refresh_index` runs `apk update` only during apply; refresh is not a separate report row. |
 | `UserResource` | `id`, `name` | Creates with `useradd`; supports `uid`, `gid`, `groups`, `home`, `shell`, `system`, and `create_home`. Existing home, shell, or group changes require `update: true`. UID and GID changes are blocked. `absent` never removes a non-empty home. |
 | `GroupResource` | `id`, `name` | Creates with `groupadd`; supports `gid` and `system`. `absent` runs `groupdel`. |
 | `CommandResource` | `id`, and `argv` or `shell` | Unchanged when `creates` exists or `unless_argv` exits zero. `always_run` runs it every apply. `timeout` bounds the command. |

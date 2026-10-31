@@ -3,15 +3,6 @@
 Prefix: XIN
 Next: 8
 
-### XIN-2 · P3 · Package index refresh is not visible in reports
-
-- **Area:** Operability
-- **Where:** `lib/xinfra/driver.xsh:147`, `lib/xinfra/resources/package.xsh:10`, `docs/resources.md:25`
-- **Problem:** `PackageApply.refreshed` records whether `apk update` ran, but `driver.apply` returns only `PackageApply.result`. The CLI report has no refresh field or row, so an operator cannot see that apply refreshed the index, despite the resource documentation saying it is reported.
-- **Recommendation:** Surface refresh as a result field or a separate apply phase row, or remove the reporting claim.
-- **Fix with:** `none`
-- **Effort:** S
-
 ### XIN-3 · P3 · Rendered templates are not size-bounded
 
 - **Area:** Security
