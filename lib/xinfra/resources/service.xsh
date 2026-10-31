@@ -111,3 +111,16 @@ export proc restart_remote(
   }
   Ok(result(name, name, host.Changed, true))
 }
+
+## Reload one service, used by coalesced change notifications.
+export proc reload_remote(
+  session: transport.Session,
+  name: Str,
+  elevate: List[Str] = [],
+) -> Result[host.ApplyResult, Error] {
+  let reloaded = execute(session, [@elevate, "rc-service", name, "reload"])?
+  if reloaded.exit_code != 0 {
+    return Ok(result(name, name, host.Failed, false, text(reloaded.stderr).trim()))
+  }
+  Ok(result(name, name, host.Changed, true))
+}

@@ -1,8 +1,10 @@
 ##! xinfra command line parsing, selection, apply policy, and reporting.
 
+use xinfra.driver
 use xinfra.host
 use xinfra.inventory
 use xinfra.model
+use xinfra.notify
 use xinfra.outcome
 use xinfra.plan
 use xinfra.redact
@@ -11,6 +13,7 @@ use xinfra.resources.dir
 use xinfra.resources.file
 use xinfra.resources.symlink
 use xinfra.validate
+use xinfra.version
 
 ## The subcommand selected on the command line.
 export enum Subcommand: Str {
@@ -131,6 +134,7 @@ Options:
   --plan PATH        Apply a previously saved plan.
   --host NAME        Host to unlock.
   --force            Confirm an unlock.
+  -V, --version      Show the xinfra version.
   -h, --help         Show help.
 """
 }
@@ -527,16 +531,35 @@ proc observed_for(ops: host.HostOps, resource: model.Resource) [fs, env, error] 
 
 proc gather_facts(
   ops: host.HostOps?,
+  allow_remote: Bool,
   deployment: validate.Deployment,
   selected: inventory.Inventory,
-) [fs, env, error] -> plan.Facts {
+) [fs, env, process, io, error] -> plan.Facts {
   if ops == null {
-    var names: List[Str] = []
-    for host in selected.hosts {
-      names += [host.name]
+    if ! allow_remote {
+      var names: List[Str] = []
+      for entry in selected.hosts {
+        names += [entry.name]
+      }
+
+      return plan.empty_facts(names)
     }
 
-    return plan.empty_facts(names)
+    var entries: List[plan.HostFacts] = []
+    for entry in selected.hosts {
+      var observed: Map[Str, plan.Observed] = map.empty()
+      for resource in deployment.resources {
+        if model.applies_to(resource, entry.name, entry.groups) {
+          let value = match driver.observe(entry, resource) {
+            Ok(value) => value,
+            Err(_) => plan.Unknown,
+          }
+          observed = observed.set(model.identity(resource), value)
+        }
+      }
+      entries += [plan.HostFacts(name: entry.name, observed: observed)]
+    }
+    return plan.Facts(hosts: entries)
   }
 
   let handle = ops
@@ -558,8 +581,9 @@ proc gather_facts(
 proc compute(
   options: Options,
   ops: host.HostOps?,
+  allow_remote: Bool,
   root: Path,
-) [fs, env, error] -> Result[Computed, model.Problem] {
+) [fs, env, process, io, error] -> Result[Computed, model.Problem] {
   let inventory_file = options.inventory ?? p""
   var deploy_file = options.deploy ?? p""
   if options.deploy == null and options.plan != null {
@@ -574,7 +598,7 @@ proc compute(
   let loaded = load_inventory(inventory_file)?
   let selected = select_hosts(loaded, options.limit, options.exclude)?
   let deployment = validate.load(deploy_file, loaded, root)?
-  let facts = gather_facts(ops, deployment, selected)
+  let facts = gather_facts(ops, allow_remote, deployment, selected)
   let actions = plan.plan(deployment, selected, facts)
   Ok(
     Computed(
@@ -921,14 +945,140 @@ proc no_transport_rows(run_id: Str, actions: List[plan.Action]) -> List[report.R
   rows
 }
 
+proc apply_actions_remote(
+  computed: Computed,
+  actions: List[plan.Action],
+  policy: OnError,
+) [fs, env, time, process, io, error] -> List[Applied] {
+  var hosts: Map[Str, inventory.Host] = map.empty()
+  for entry in computed.inventory.hosts {
+    hosts = hosts.set(entry.name, entry)
+  }
+
+  var applied: List[Applied] = []
+  var stopped: Set[Str] = set.empty()
+  var failed: Map[Str, Set[Str]] = map.empty()
+  var aborted = false
+  for action in actions {
+    let host_failures: Set[Str] = failed.get(action.host) ?? set.empty()
+    var skip_cause: Str? = null
+    var skipped = false
+    if aborted {
+      skip_cause = "aborted after an earlier failure"
+      skipped = true
+    } else if action.host in stopped {
+      skip_cause = "host stopped after a failure"
+      skipped = true
+    } else {
+      for requirement in model.requirements(action.resource) {
+        if requirement in host_failures {
+          skip_cause = f"prerequisite {requirement} failed"
+        }
+      }
+    }
+
+    if skip_cause != null {
+      let status = if skipped { host.Skipped } else { host.Blocked }
+      applied += [
+        Applied(
+          result: host.ApplyResult(
+            id: action.id,
+            host: action.host,
+            status: status,
+            verified: false,
+            cause: skip_cause,
+          ),
+          duration_ms: 0,
+        ),
+      ]
+      continue
+    }
+
+    let started = time.monotonic()?
+    let result = match hosts.get(action.host) {
+      Ok(entry) => match driver.apply(entry, action.resource, action.source) {
+        Ok(value) => value,
+        Err(failure) => host.ApplyResult(
+          id: action.id,
+          host: action.host,
+          status: host.Failed,
+          verified: false,
+          cause: failure.message,
+        ),
+      },
+      Err(_) => host.ApplyResult(
+        id: action.id,
+        host: action.host,
+        status: host.Failed,
+        verified: false,
+        cause: "host is missing from the selected inventory",
+      ),
+    }
+    let elapsed = (time.monotonic()? - started) / 1000000
+    applied += [Applied(result: with_host(result, action.host), duration_ms: elapsed)]
+    if failure_status(result.status) {
+      failed = failed.set(action.host, host_failures.add(action.id))
+      if policy == Isolate {
+        stopped = stopped.add(action.host)
+      } else if policy == Abort {
+        aborted = true
+      }
+    }
+  }
+
+  var changed_by_host: Map[Str, List[Str]] = map.empty()
+  for index in range(actions.len()) {
+    if applied[index].result.status == host.Changed {
+      let ids = changed_by_host.get(actions[index].host) ?? []
+      changed_by_host = changed_by_host.set(actions[index].host, ids + [actions[index].id])
+    }
+  }
+  let resources = actions |> map .resource
+  for action in actions {
+    match action.resource {
+      model.ServiceResource(spec) => {
+        let changed_ids = changed_by_host.get(action.host) ?? []
+        if spec.id in notify.coalesce(changed_ids, resources) {
+          let started = time.monotonic()?
+          let result = match hosts.get(action.host) {
+            Ok(entry) => match driver.notify(entry, spec) {
+              Ok(value) => value,
+              Err(failure) => host.ApplyResult(
+                id: spec.id,
+                host: action.host,
+                status: host.Failed,
+                verified: false,
+                cause: failure.message,
+              ),
+            },
+            Err(_) => host.ApplyResult(
+              id: spec.id,
+              host: action.host,
+              status: host.Failed,
+              verified: false,
+              cause: "host is missing from the selected inventory",
+            ),
+          }
+          let elapsed = (time.monotonic()? - started) / 1000000
+          applied += [Applied(result: with_host(result, action.host), duration_ms: elapsed)]
+        }
+      }
+      _ => {}
+    }
+  }
+
+  applied
+}
+
 proc run_apply(
   options: Options,
   computed: Computed,
   ops: host.HostOps?,
+  allow_remote: Bool,
   root: Path,
   run_id: Str,
   redactor: redact.Redactor,
-) [fs, env, time, error] -> Execution {
+) [fs, env, time, process, io, error] -> Execution {
   if options.plan != null {
     let plan_file = options.plan ?? p""
     let artifact = match load_plan(plan_file) {
@@ -946,7 +1096,10 @@ proc run_apply(
   }
 
   var rows: List[report.ResultRow] = []
-  if ops == null {
+  if ops == null and allow_remote {
+    let applied = apply_actions_remote(computed, computed.actions, options.on_error)
+    rows = applied_rows(run_id, applied, "apply")
+  } else if ops == null {
     rows = no_transport_rows(run_id, computed.actions)
   } else {
     let applied = apply_actions(ops, computed.actions, options.on_error)
@@ -973,10 +1126,11 @@ proc run_unlock(options: Options, run_id: Str, redactor: redact.Redactor) -> Res
 proc dispatch(
   options: Options,
   ops: host.HostOps?,
+  allow_remote: Bool,
   root: Path,
   run_id: Str,
   redactor: redact.Redactor,
-) [fs, env, time, error] -> Execution {
+) [fs, env, time, process, io, error] -> Execution {
   if options.help {
     return execution(0, command_help(options.command), "")
   }
@@ -988,7 +1142,7 @@ proc dispatch(
     },
     Doctor => doctor(options, root, run_id, options.style, redactor),
     Plan => {
-      let computed = match compute(options, ops, root) {
+      let computed = match compute(options, ops, allow_remote, root) {
         Ok(value) => value,
         Err(failure) => {
           return execution(2, "", report.clean(failure.message, redactor) + "\n")
@@ -997,7 +1151,7 @@ proc dispatch(
       run_plan(options, computed, root, run_id, redactor)
     }
     Check => {
-      let computed = match compute(options, ops, root) {
+      let computed = match compute(options, ops, allow_remote, root) {
         Ok(value) => value,
         Err(failure) => {
           return execution(2, "", report.clean(failure.message, redactor) + "\n")
@@ -1009,13 +1163,13 @@ proc dispatch(
       }
     }
     Apply => {
-      let computed = match compute(options, ops, root) {
+      let computed = match compute(options, ops, allow_remote, root) {
         Ok(value) => value,
         Err(failure) => {
           return execution(2, "", report.clean(failure.message, redactor) + "\n")
         },
       }
-      run_apply(options, computed, ops, root, run_id, redactor)
+      run_apply(options, computed, ops, allow_remote, root, run_id, redactor)
     }
   }
 }
@@ -1027,7 +1181,11 @@ export proc execute(
   root: Path,
   run_id: Str = "",
   redactor: redact.Redactor = redact.empty(),
-) [fs, env, time, error] -> Execution {
+  allow_remote: Bool = false,
+) [fs, env, time, process, io, error] -> Execution {
+  if argv == ["--version"] or argv == ["-V"] {
+    return execution(0, f"xinfra {version.VERSION}\n", "")
+  }
   let effective_run_id = if run_id.is_empty() { f"run-{time.now()}" } else { run_id }
   let attempted = try {
     let parsed = parse(argv)
@@ -1039,7 +1197,7 @@ export proc execute(
 
         return execution(2, "", report.clean(failure.message, redactor) + "\n")
       }
-      Ok(options) => dispatch(options, ops, root, effective_run_id, redactor),
+      Ok(options) => dispatch(options, ops, allow_remote, root, effective_run_id, redactor),
     }
   }
   match attempted {
@@ -1054,8 +1212,9 @@ export proc run_cli(
   ops: host.HostOps?,
   root: Path,
   redactor: redact.Redactor = redact.empty(),
-) [fs, env, time, io, error] -> Int {
-  let result = execute(argv, ops, root, "", redactor)
+  allow_remote: Bool = false,
+) [fs, env, time, process, io, error] -> Int {
+  let result = execute(argv, ops, root, "", redactor, allow_remote)
   if ! result.stdout.is_empty() {
     io.write_stdout(result.stdout)?
   }

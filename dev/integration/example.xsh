@@ -161,7 +161,12 @@ proc apply_all(
       match resource {
         model.ServiceResource(spec) => {
           if spec.id == service_id {
-            let _ = service.restart_remote(session, spec.name, elevate)?
+            let notification = if spec.on_change == model.Reload {
+              service.reload_remote(session, spec.name, elevate)?
+            } else {
+              service.restart_remote(session, spec.name, elevate)?
+            }
+            let _ = notification
           }
         }
         _ => {}
