@@ -21,7 +21,7 @@ PREFIX ?= /usr/local
 
 export LIMA_HOME
 
-.PHONY: check test fixtures verify down oracle differential integration package install
+.PHONY: check test fixtures verify down oracle differential integration package install perf
 
 check:
 	$(XSHT) check
@@ -49,6 +49,9 @@ integration:
 
 package:
 	$(XSH) dev/package.xsh
+
+perf: oracle
+	XINFRA_XSH=$(abspath $(XSH)) XINFRA_PYINFRA=$(PYINFRA) $(XSH) dev/fixtures.xsh exec --cwd $(CURDIR) -- $(XSH) dev/perf.xsh
 
 install: package
 	@set -e; \
